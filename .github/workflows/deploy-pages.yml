@@ -17,13 +17,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs
-      - id: deployment
+
+  deploy:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      # GitHub's artifact metadata API can lag a second after upload. Wait, then retry once.
+      - name: Wait for artifact metadata
+        run: sleep 20
+      - id: first
         uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - name: Wait before retry
+        if: steps.first.outcome == 'failure'
+        run: sleep 45
+      - id: retry
+        if: steps.first.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+      - name: Fail if both attempts failed
+        if: steps.first.outcome == 'failure' && steps.retry.outcome == 'failure'
+        run: exit 1
