@@ -110,6 +110,7 @@ sealed interface UiAction {
     data class CheckUpdate(val manual: Boolean) : UiAction
     data class SaveApiKey(val key: String) : UiAction
     data class AskCoach(val question: String) : UiAction
+    data class ReduceMotion(val enabled: Boolean) : UiAction
     data class Simulate(val enabled: Boolean) : UiAction
     data class SimulatePercent(val percent: Float) : UiAction
     data class ForceMood(val mood: Mood?) : UiAction
@@ -303,6 +304,7 @@ class AppViewModel(
                 toast("API key saved on this device")
             }
             is UiAction.AskCoach -> askCoach(a.question)
+            is UiAction.ReduceMotion -> settings.setReduceMotion(a.enabled)
             is UiAction.Simulate -> _dev.update { it.copy(simulate = a.enabled) }
             is UiAction.SimulatePercent -> _dev.update { it.copy(simulatePercent = a.percent) }
             is UiAction.ForceMood -> _dev.update { it.copy(forcedMood = a.mood) }

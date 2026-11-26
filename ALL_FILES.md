@@ -1,6 +1,6 @@
 # Sippy — complete source listing
 
-Every text file in this repository, in full, with its path as a heading. Binary files (the Gradle wrapper JAR and PNG icons) are stored in the repository but cannot be printed as text.
+Every text file in this repository, in full, with its path as a heading. Binary files (Gradle wrapper JAR and PNG icons) are stored in the repository but cannot be printed as text.
 
 ---
 
@@ -123,8 +123,8 @@ android {
         applicationId = "com.sippy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.1.1"
+        versionCode = 4
+        versionName = "1.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
@@ -565,7 +565,8 @@ data class Settings(
     val lastProcessedDay: String = "",
     val debugOverlay: Boolean = false,
     val lastUpdateCheckDay: String = "",
-    val openRouterKey: String = ""
+    val openRouterKey: String = "",
+    val reduceMotion: Boolean = false
 )
 
 private object Keys {
@@ -587,6 +588,7 @@ private object Keys {
     val DEBUG = booleanPreferencesKey("debug_overlay")
     val UPDATE_CHECK = stringPreferencesKey("last_update_check_day")
     val OPENROUTER_KEY = stringPreferencesKey("openrouter_api_key")
+    val REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
 }
 
 class SettingsRepository(private val context: Context) {
@@ -611,7 +613,8 @@ class SettingsRepository(private val context: Context) {
                 lastProcessedDay = p[Keys.PROCESSED] ?: "",
                 debugOverlay = p[Keys.DEBUG] ?: false,
                 lastUpdateCheckDay = p[Keys.UPDATE_CHECK] ?: "",
-                openRouterKey = p[Keys.OPENROUTER_KEY] ?: ""
+                openRouterKey = p[Keys.OPENROUTER_KEY] ?: "",
+                reduceMotion = p[Keys.REDUCE_MOTION] ?: false
             )
         }
 
@@ -645,6 +648,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setDebugOverlay(enabled: Boolean) = set(Keys.DEBUG, enabled)
     suspend fun setUpdateCheckDay(day: String) = set(Keys.UPDATE_CHECK, day)
     suspend fun setOpenRouterKey(key: String) = set(Keys.OPENROUTER_KEY, key.trim())
+    suspend fun setReduceMotion(enabled: Boolean) = set(Keys.REDUCE_MOTION, enabled)
 
     suspend fun clearAll() = context.settingsStore.edit { it.clear() }
 }
@@ -1527,6 +1531,7 @@ sealed interface UiAction {
     data class CheckUpdate(val manual: Boolean) : UiAction
     data class SaveApiKey(val key: String) : UiAction
     data class AskCoach(val question: String) : UiAction
+    data class ReduceMotion(val enabled: Boolean) : UiAction
     data class Simulate(val enabled: Boolean) : UiAction
     data class SimulatePercent(val percent: Float) : UiAction
     data class ForceMood(val mood: Mood?) : UiAction
@@ -1720,6 +1725,7 @@ class AppViewModel(
                 toast("API key saved on this device")
             }
             is UiAction.AskCoach -> askCoach(a.question)
+            is UiAction.ReduceMotion -> settings.setReduceMotion(a.enabled)
             is UiAction.Simulate -> _dev.update { it.copy(simulate = a.enabled) }
             is UiAction.SimulatePercent -> _dev.update { it.copy(simulatePercent = a.percent) }
             is UiAction.ForceMood -> _dev.update { it.copy(forcedMood = a.mood) }
@@ -2002,9 +2008,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -2028,8 +2036,8 @@ enum class AnimationKind(val label: String) {
 }
 
 /**
- * One Canvas, one infinite phase supplied by the caller. All moods and species are drawn here,
- * with no Path/Color allocation inside the repeated draw loop (the triangle Path is remembered).
+ * One Canvas, one infinite phase from the caller. Richer 2.5D shading is done with gradients;
+ * no bitmaps, no Lottie and no allocations in the repeated draw loop.
  */
 @Composable
 fun FriendCanvas(
@@ -2046,66 +2054,67 @@ fun FriendCanvas(
     onClick: (() -> Unit)? = null
 ) {
     val colors = LocalFriendColors.current
+    val body = remember(colors) {
+        Brush.linearGradient(listOf(colors.light, colors.secondary, colors.primary))
+    }
+    val aura = remember(colors) {
+        Brush.radialGradient(listOf(colors.glow.copy(alpha = 0.4f), Color.Transparent))
+    }
+    val glass = remember(colors) {
+        Brush.linearGradient(listOf(Color.White.copy(alpha = 0.7f), Color.White.copy(alpha = 0f)))
+    }
     val scale = when (stage) {
-        GrowthStage.BABY -> 0.72f
-        GrowthStage.YOUNG -> 0.86f
+        GrowthStage.BABY -> 0.74f
+        GrowthStage.YOUNG -> 0.88f
         GrowthStage.GROWN -> 1f
-        GrowthStage.ELDER -> 1.1f
+        GrowthStage.ELDER -> 1.12f
     }
     val t = if (animationsEnabled) phase * 2f * PI.toFloat() else 0f
-    val bob = if (animationsEnabled && (mood != Mood.SLEEPY || animation == AnimationKind.BOB))
-        sin(t) * 6f else 0f
+    val sleepy = mood == Mood.SLEEPY && animation != AnimationKind.BOB
+    val bob = if (animationsEnabled && !sleepy) sin(t + 0.4f) * 7f else 0f
     val dancing = mood == Mood.DANCING || animation == AnimationKind.DANCE
-    val rotation = if (dancing && animationsEnabled) sin(t * 3f) * 9f else 0f
+    val rotation = if (dancing && animationsEnabled) sin(t * 3f) * 10f else 0f
     val giggle = if (animation == AnimationKind.GIGGLE && animationsEnabled)
-        1f + sin(animationProgress * PI.toFloat() * 4f) * 0.07f else 1f
+        1f + sin(animationProgress * PI.toFloat() * 4f) * 0.08f else 1f
     val squish = if (animation == AnimationKind.LEVEL_UP && animationsEnabled)
         1f + sin(animationProgress * PI.toFloat()) * 0.12f else 1f
     val blink = (animation == AnimationKind.BLINK && animationProgress < 0.16f) ||
-        (animationsEnabled && (phase * 9f) % 1f < 0.045f)
+        (animationsEnabled && (phase * 9f) % 1f < 0.05f)
     val triangle = remember { Path() }
-
-    val clickable = if (onClick != null) Modifier.clickable(
-        interactionSource = remember { MutableInteractionSource() },
-        indication = null,
-        onClick = onClick
-    ) else Modifier
+    val interaction = remember { MutableInteractionSource() }
 
     Canvas(
         modifier
             .size(size)
-            .then(clickable)
+            .then(if (onClick != null) Modifier.clickable(interactionSource = interaction,
+                indication = null, onClick = onClick) else Modifier)
             .graphicsLayer(
                 translationY = bob,
                 rotationZ = rotation,
                 scaleX = scale * giggle / squish,
                 scaleY = scale * giggle * squish
             )
-            .semantics(mergeDescendants = true) {
-                description?.let { contentDescription = it }
-            }
+            .semantics(mergeDescendants = true) { description?.let { contentDescription = it } }
     ) {
         val cx = center.x
         val cy = center.y
         val r = size.toPx() * 0.30f
+        drawCircle(brush = aura, radius = r * 1.75f, center = Offset(cx, cy + r * 0.15f))
         when (species) {
-            Species.DROPLET -> drawDroplet(cx, cy, r, mood, blink, dancing, stage, colors, triangle, t)
-            Species.SPROUT -> drawSprout(cx, cy, r, mood, blink, dancing, stage, colors, t)
-            Species.KITTY -> drawKitty(cx, cy, r, mood, blink, dancing, stage, colors, t)
-            Species.BLOBBY -> drawBlobby(cx, cy, r, mood, blink, dancing, stage, colors, t)
+            Species.DROPLET -> drawDroplet(cx, cy, r, mood, blink, dancing, stage, body, glass, colors, triangle, t)
+            Species.SPROUT -> drawSprout(cx, cy, r, mood, blink, dancing, stage, body, glass, colors, t)
+            Species.KITTY -> drawKitty(cx, cy, r, mood, blink, dancing, stage, body, glass, colors, t)
+            Species.BLOBBY -> drawBlobby(cx, cy, r, mood, blink, dancing, stage, body, glass, colors, t)
         }
         if (mood == Mood.HAPPY || dancing) {
-            val sparkleAlpha = if (animationsEnabled) 0.45f + 0.45f * sin(t * 2f) else 0.8f
+            val sparkle = if (animationsEnabled) 0.45f + 0.45f * sin(t * 2f) else 0.8f
             for (i in 0 until 4) {
                 val a = t + i * (PI.toFloat() / 2f)
-                drawCircle(
-                    colors.glow.copy(alpha = sparkleAlpha),
-                    radius = 3f + i % 2 * 2f,
-                    center = Offset(cx + cos(a) * r * 1.35f, cy + sin(a) * r * 1.25f - r * 0.4f)
-                )
+                drawCircle(colors.glow.copy(alpha = sparkle), radius = 3f + (i % 2) * 2f,
+                    center = Offset(cx + cos(a) * r * 1.4f, cy + sin(a) * r * 1.3f - r * 0.4f))
             }
         }
-        if (mood == Mood.DANCING || animation == AnimationKind.CONFETTI || animation == AnimationKind.LEVEL_UP) {
+        if (dancing || animation == AnimationKind.CONFETTI || animation == AnimationKind.LEVEL_UP) {
             drawParticles(cx, cy, r, colors, phase, animationsEnabled)
         }
     }
@@ -2113,143 +2122,184 @@ fun FriendCanvas(
 
 private fun DrawScope.drawDroplet(
     cx: Float, cy: Float, r: Float, mood: Mood, blink: Boolean, dancing: Boolean,
-    stage: GrowthStage, colors: FriendColors, triangle: Path, t: Float
+    stage: GrowthStage, body: Brush, glass: Brush, colors: FriendColors, triangle: Path, t: Float
 ) {
-    drawCircle(colors.glow.copy(alpha = 0.22f), r * 1.18f, Offset(cx, cy + r * 0.12f))
-    drawCircle(colors.primary, r, Offset(cx, cy))
+    drawCircle(brush = body, radius = r, center = Offset(cx, cy))
     triangle.rewind()
-    triangle.moveTo(cx, cy - r * 1.65f)
-    triangle.lineTo(cx - r * 0.52f, cy - r * 0.45f)
-    triangle.lineTo(cx + r * 0.52f, cy - r * 0.45f)
+    triangle.moveTo(cx, cy - r * 1.72f)
+    triangle.lineTo(cx - r * 0.55f, cy - r * 0.42f)
+    triangle.lineTo(cx + r * 0.55f, cy - r * 0.42f)
     triangle.close()
-    drawPath(triangle, colors.primary)
-    drawCircle(Color.White.copy(alpha = 0.35f), r * 0.24f, Offset(cx - r * 0.38f, cy - r * 0.3f))
-    drawFace(cx, cy + r * 0.08f, r * 0.28f, mood, blink, dancing, colors.ink)
+    drawPath(triangle, brush = body)
+    drawOval(brush = glass, topLeft = Offset(cx - r * 0.72f, cy - r * 0.78f),
+        size = Size(r * 0.55f, r * 0.95f))
+    drawCircle(Color.White.copy(alpha = 0.75f), r * 0.1f, Offset(cx - r * 0.42f, cy - r * 0.42f))
+    drawArc(color = colors.glow.copy(alpha = 0.55f), startAngle = 20f, sweepAngle = 140f,
+        useCenter = false, topLeft = Offset(cx - r * 0.82f, cy + r * 0.2f),
+        size = Size(r * 1.64f, r * 1.3f), style = Stroke(width = r * 0.06f))
+    drawFace(cx, cy + r * 0.06f, r * 0.29f, mood, blink, dancing, colors, t)
     if (stage == GrowthStage.ELDER) {
-        drawCircle(Color.White.copy(alpha = 0.8f), r * 0.09f, Offset(cx + r * 0.55f, cy + r * 0.55f))
-        drawCircle(Color.White.copy(alpha = 0.8f), r * 0.07f, Offset(cx - r * 0.6f, cy + r * 0.45f))
+        drawCircle(Color.White.copy(alpha = 0.85f), r * 0.09f, Offset(cx + r * 0.58f, cy + r * 0.56f))
+        drawCircle(Color.White.copy(alpha = 0.7f), r * 0.07f, Offset(cx - r * 0.62f, cy + r * 0.46f))
     }
 }
 
 private fun DrawScope.drawSprout(
     cx: Float, cy: Float, r: Float, mood: Mood, blink: Boolean, dancing: Boolean,
-    stage: GrowthStage, colors: FriendColors, t: Float
+    stage: GrowthStage, body: Brush, glass: Brush, colors: FriendColors, t: Float
 ) {
-    val sway = if (dancing) sin(t * 3f) * r * 0.12f else sin(t) * r * 0.03f
-    drawRoundRectBox(colors.primary, Rect(cx - r * 0.75f, cy + r * 0.35f, cx + r * 0.75f, cy + r * 1.15f), r * 0.2f)
-    drawLine(colors.ink.copy(alpha = 0.55f), Offset(cx, cy + r * 0.4f), Offset(cx + sway, cy - r * 0.9f), r * 0.1f)
-    drawOvalBox(colors.secondary, Rect(cx + sway - r * 0.95f, cy - r * 0.55f, cx + sway - r * 0.05f, cy - r * 0.05f))
-    drawOvalBox(colors.secondary, Rect(cx + sway + r * 0.05f, cy - r * 0.8f, cx + sway + r * 0.95f, cy - r * 0.3f))
+    val sway = if (dancing) sin(t * 3f) * r * 0.14f else sin(t + 0.7f) * r * 0.035f
+    drawOval(brush = glass, topLeft = Offset(cx - r * 0.85f, cy + r * 0.28f),
+        size = Size(r * 1.7f, r * 0.95f))
+    drawRoundRectBox(colors.primary, Rect(cx - r * 0.78f, cy + r * 0.38f, cx + r * 0.78f, cy + r * 1.18f), r * 0.22f)
+    drawRoundRect(brush = body, topLeft = Offset(cx - r * 0.78f, cy + r * 0.38f),
+        size = Size(r * 1.56f, r * 0.8f), cornerRadius = CornerRadius(r * 0.22f, r * 0.22f))
+    drawLine(colors.ink.copy(alpha = 0.55f), Offset(cx, cy + r * 0.42f),
+        Offset(cx + sway, cy - r * 0.95f), r * 0.1f)
+    drawOval(brush = body, topLeft = Offset(cx + sway - r * 1.02f, cy - r * 0.62f),
+        size = Size(r * 0.98f, r * 0.5f))
+    drawOval(brush = body, topLeft = Offset(cx + sway + r * 0.04f, cy - r * 0.86f),
+        size = Size(r * 0.98f, r * 0.5f))
+    drawLine(Color.White.copy(alpha = 0.5f), Offset(cx + sway - r * 0.85f, cy - r * 0.42f),
+        Offset(cx + sway - r * 0.2f, cy - r * 0.3f), r * 0.035f)
     if (stage == GrowthStage.GROWN || stage == GrowthStage.ELDER) {
         for (i in 0 until 5) {
             val a = i * (PI.toFloat() * 2f / 5f) + if (dancing) t else 0f
-            drawCircle(colors.glow, r * 0.22f, Offset(cx + sway + cos(a) * r * 0.38f, cy - r * 0.95f + sin(a) * r * 0.38f))
+            drawCircle(colors.glow, r * 0.23f,
+                Offset(cx + sway + cos(a) * r * 0.4f, cy - r * 1f + sin(a) * r * 0.4f))
         }
-        drawCircle(colors.light, r * 0.2f, Offset(cx + sway, cy - r * 0.95f))
+        drawCircle(colors.light, r * 0.2f, Offset(cx + sway, cy - r * 1f))
     }
     if (stage == GrowthStage.ELDER) {
-        drawOvalBox(colors.secondary, Rect(cx - r * 1.1f, cy + r * 0.05f, cx - r * 0.35f, cy + r * 0.4f))
-        drawOvalBox(colors.secondary, Rect(cx + r * 0.35f, cy - r * 0.1f, cx + r * 1.1f, cy + r * 0.25f))
+        drawOval(brush = body, topLeft = Offset(cx - r * 1.18f, cy + r * 0.02f), size = Size(r * 0.8f, r * 0.38f))
+        drawOval(brush = body, topLeft = Offset(cx + r * 0.38f, cy - r * 0.12f), size = Size(r * 0.8f, r * 0.38f))
     }
-    drawFace(cx + sway * 0.3f, cy + r * 0.7f, r * 0.22f, mood, blink, dancing, colors.ink)
+    drawFace(cx + sway * 0.25f, cy + r * 0.72f, r * 0.22f, mood, blink, dancing, colors, t)
 }
 
 private fun DrawScope.drawKitty(
     cx: Float, cy: Float, r: Float, mood: Mood, blink: Boolean, dancing: Boolean,
-    stage: GrowthStage, colors: FriendColors, t: Float
+    stage: GrowthStage, body: Brush, glass: Brush, colors: FriendColors, t: Float
 ) {
-    val hop = if (dancing) sin(t * 4f) * r * 0.12f else 0f
-    val tail = if (dancing) sin(t * 2f) * r * 0.3f else r * 0.2f
-    drawLine(colors.primary, Offset(cx + r * 0.8f, cy + r * 0.75f),
-        Offset(cx + r * 1.35f + tail, cy + r * 0.2f), r * 0.16f)
-    drawCircle(colors.primary, r * 0.82f, Offset(cx, cy - r * 0.15f + hop))
-    drawCircle(colors.primary, r * 0.38f, Offset(cx - r * 0.62f, cy - r * 0.72f + hop))
-    drawCircle(colors.primary, r * 0.38f, Offset(cx + r * 0.62f, cy - r * 0.72f + hop))
-    drawCircle(colors.glow, r * 0.19f, Offset(cx - r * 0.62f, cy - r * 0.74f + hop))
-    drawCircle(colors.glow, r * 0.19f, Offset(cx + r * 0.62f, cy - r * 0.74f + hop))
-    drawFace(cx, cy - r * 0.16f + hop, r * 0.27f, mood, blink, dancing, colors.ink)
+    val hop = if (dancing) sin(t * 4f) * r * 0.14f else 0f
+    val tail = if (dancing) sin(t * 2f) * r * 0.36f else r * 0.2f
+    drawLine(colors.primary, Offset(cx + r * 0.82f, cy + r * 0.74f),
+        Offset(cx + r * 1.38f + tail, cy + r * 0.16f), r * 0.16f)
+    drawCircle(brush = body, radius = r * 0.84f, center = Offset(cx, cy - r * 0.16f + hop))
+    drawCircle(colors.primary, r * 0.38f, Offset(cx - r * 0.64f, cy - r * 0.74f + hop))
+    drawCircle(colors.primary, r * 0.38f, Offset(cx + r * 0.64f, cy - r * 0.74f + hop))
+    drawCircle(colors.glow, r * 0.2f, Offset(cx - r * 0.64f, cy - r * 0.76f + hop))
+    drawCircle(colors.glow, r * 0.2f, Offset(cx + r * 0.64f, cy - r * 0.76f + hop))
+    drawOval(brush = glass, topLeft = Offset(cx - r * 0.6f, cy - r * 0.82f + hop), size = Size(r * 0.5f, r * 0.72f))
+    drawFace(cx, cy - r * 0.16f + hop, r * 0.28f, mood, blink, dancing, colors, t)
     for (i in 0 until 2) {
         val side = if (i == 0) -1f else 1f
         drawLine(colors.ink.copy(alpha = 0.6f), Offset(cx + side * r * 0.5f, cy + hop),
-            Offset(cx + side * r * 0.98f, cy - r * 0.08f + hop), r * 0.035f)
-        drawLine(colors.ink.copy(alpha = 0.6f), Offset(cx + side * r * 0.5f, cy + r * 0.14f + hop),
-            Offset(cx + side * r * 0.98f, cy + r * 0.22f + hop), r * 0.035f)
+            Offset(cx + side * r * 1f, cy - r * 0.08f + hop), r * 0.035f)
+        drawLine(colors.ink.copy(alpha = 0.6f), Offset(cx + side * r * 0.5f, cy + r * 0.15f + hop),
+            Offset(cx + side * r * 1f, cy + r * 0.24f + hop), r * 0.035f)
     }
     if (stage == GrowthStage.GROWN || stage == GrowthStage.ELDER) {
-        drawOvalBox(colors.glow, Rect(cx - r * 0.95f, cy + r * 0.7f + hop, cx - r * 0.1f, cy + r * 1.02f + hop))
-        drawOvalBox(colors.glow, Rect(cx + r * 0.1f, cy + r * 0.7f + hop, cx + r * 0.95f, cy + r * 1.02f + hop))
-        drawCircle(colors.primary, r * 0.17f, Offset(cx, cy + r * 0.86f + hop))
+        drawOvalBox(colors.glow, Rect(cx - r * 1f, cy + r * 0.68f + hop, cx - r * 0.1f, cy + r * 1.04f + hop))
+        drawOvalBox(colors.glow, Rect(cx + r * 0.1f, cy + r * 0.68f + hop, cx + r * 1f, cy + r * 1.04f + hop))
+        drawCircle(colors.primary, r * 0.18f, Offset(cx, cy + r * 0.86f + hop))
     }
     if (stage == GrowthStage.ELDER) {
-        for (i in -1..1) drawCircle(colors.light, r * 0.18f, Offset(cx + i * r * 0.42f, cy - r * 1.12f + hop))
+        for (i in -1..1) drawCircle(colors.light, r * 0.19f, Offset(cx + i * r * 0.44f, cy - r * 1.14f + hop))
     }
 }
 
 private fun DrawScope.drawBlobby(
     cx: Float, cy: Float, r: Float, mood: Mood, blink: Boolean, dancing: Boolean,
-    stage: GrowthStage, colors: FriendColors, t: Float
+    stage: GrowthStage, body: Brush, glass: Brush, colors: FriendColors, t: Float
 ) {
-    val wobble = if (dancing) sin(t * 4f) * r * 0.14f else sin(t) * r * 0.04f
-    drawOvalBox(colors.primary, Rect(cx - r - wobble, cy - r * 0.65f, cx + r + wobble, cy + r * 1.1f))
-    drawCircle(colors.primary, r * 0.72f, Offset(cx - r * 0.6f, cy - r * 0.25f))
-    drawCircle(colors.primary, r * 0.72f, Offset(cx + r * 0.6f, cy - r * 0.25f))
-    drawOvalBox(colors.secondary, Rect(cx - r * 0.55f, cy + r * 0.95f, cx - r * 0.05f, cy + r * 1.3f))
-    drawOvalBox(colors.secondary, Rect(cx + r * 0.05f, cy + r * 0.95f, cx + r * 0.55f, cy + r * 1.3f))
-    drawCircle(Color.White.copy(alpha = 0.28f), r * 0.22f, Offset(cx - r * 0.35f, cy - r * 0.35f))
-    drawFace(cx, cy + r * 0.12f, r * 0.3f, mood, blink, dancing, colors.ink)
+    val wobble = if (dancing) sin(t * 4f) * r * 0.16f else sin(t) * r * 0.045f
+    drawOval(brush = body, topLeft = Offset(cx - r - wobble, cy - r * 0.7f),
+        size = Size(r * 2f + wobble * 2f, r * 1.85f))
+    drawCircle(brush = body, radius = r * 0.74f, center = Offset(cx - r * 0.62f, cy - r * 0.25f))
+    drawCircle(brush = body, radius = r * 0.74f, center = Offset(cx + r * 0.62f, cy - r * 0.25f))
+    drawOvalBox(colors.secondary, Rect(cx - r * 0.58f, cy + r * 0.95f, cx - r * 0.05f, cy + r * 1.32f))
+    drawOvalBox(colors.secondary, Rect(cx + r * 0.05f, cy + r * 0.95f, cx + r * 0.58f, cy + r * 1.32f))
+    drawOval(brush = glass, topLeft = Offset(cx - r * 0.6f, cy - r * 0.62f), size = Size(r * 0.5f, r * 0.7f))
+    drawFace(cx, cy + r * 0.1f, r * 0.31f, mood, blink, dancing, colors, t)
     if (stage == GrowthStage.GROWN || stage == GrowthStage.ELDER) {
-        drawCircle(colors.glow, r * 0.2f, Offset(cx, cy - r * 0.95f))
-        drawCircle(colors.glow, r * 0.14f, Offset(cx - r * 0.28f, cy - r * 0.8f))
-        drawCircle(colors.glow, r * 0.14f, Offset(cx + r * 0.28f, cy - r * 0.8f))
+        drawCircle(colors.glow, r * 0.2f, Offset(cx, cy - r * 1f))
+        drawCircle(colors.glow, r * 0.14f, Offset(cx - r * 0.3f, cy - r * 0.84f))
+        drawCircle(colors.glow, r * 0.14f, Offset(cx + r * 0.3f, cy - r * 0.84f))
     }
     if (stage == GrowthStage.ELDER) {
-        drawLine(colors.ink, Offset(cx - r * 0.3f, cy + r * 0.95f), Offset(cx - r * 0.45f, cy + r * 1.3f), r * 0.05f)
-        drawLine(colors.ink, Offset(cx + r * 0.3f, cy + r * 0.95f), Offset(cx + r * 0.45f, cy + r * 1.3f), r * 0.05f)
+        drawLine(colors.ink, Offset(cx - r * 0.3f, cy + r * 1f), Offset(cx - r * 0.46f, cy + r * 1.32f), r * 0.05f)
+        drawLine(colors.ink, Offset(cx + r * 0.3f, cy + r * 1f), Offset(cx + r * 0.46f, cy + r * 1.32f), r * 0.05f)
     }
 }
 
 private fun DrawScope.drawFace(
-    cx: Float, cy: Float, eyeGap: Float, mood: Mood, blink: Boolean, dancing: Boolean, ink: Color
+    cx: Float, cy: Float, gap: Float, mood: Mood, blink: Boolean,
+    dancing: Boolean, colors: FriendColors, t: Float
 ) {
-    val eyeR = eyeGap * 0.28f
-    val left = cx - eyeGap
-    val right = cx + eyeGap
+    val ink = colors.ink
+    val eyeR = gap * 0.27f
+    val left = cx - gap
+    val right = cx + gap
+    val browTilt = when (mood) {
+        Mood.THIRSTY -> gap * 0.22f
+        Mood.HAPPY, Mood.DANCING -> -gap * 0.12f
+        else -> 0f
+    }
+    drawLine(ink.copy(alpha = 0.5f), Offset(left - eyeR, cy - eyeR * 2.1f + browTilt),
+        Offset(left + eyeR, cy - eyeR * 2.1f - browTilt), eyeR * 0.18f)
+    drawLine(ink.copy(alpha = 0.5f), Offset(right - eyeR, cy - eyeR * 2.1f - browTilt),
+        Offset(right + eyeR, cy - eyeR * 2.1f + browTilt), eyeR * 0.18f)
     when {
         mood == Mood.SLEEPY && !blink -> {
-            drawLine(ink, Offset(left - eyeR, cy), Offset(left + eyeR, cy), eyeR * 0.35f)
-            drawLine(ink, Offset(right - eyeR, cy), Offset(right + eyeR, cy), eyeR * 0.35f)
+            drawArcBox(Rect(left - eyeR, cy - eyeR * 0.6f, left + eyeR, cy + eyeR * 0.6f),
+                200f, 140f, ink, eyeR * 0.3f)
+            drawArcBox(Rect(right - eyeR, cy - eyeR * 0.6f, right + eyeR, cy + eyeR * 0.6f),
+                200f, 140f, ink, eyeR * 0.3f)
+            for (i in 0 until 3) {
+                val zx = cx + gap * 1.6f + i * eyeR * 0.7f
+                val zy = cy - eyeR * 2.4f - i * eyeR * 1.2f + sin(t + i) * 2f
+                drawLine(colors.glow, Offset(zx, zy), Offset(zx + eyeR, zy), eyeR * 0.16f)
+                drawLine(colors.glow, Offset(zx + eyeR, zy), Offset(zx, zy + eyeR), eyeR * 0.16f)
+                drawLine(colors.glow, Offset(zx, zy + eyeR), Offset(zx + eyeR, zy + eyeR), eyeR * 0.16f)
+            }
         }
         blink -> {
-            drawLine(ink, Offset(left - eyeR, cy), Offset(left + eyeR, cy), eyeR * 0.35f)
-            drawLine(ink, Offset(right - eyeR, cy), Offset(right + eyeR, cy), eyeR * 0.35f)
+            drawLine(ink, Offset(left - eyeR, cy), Offset(left + eyeR, cy), eyeR * 0.32f)
+            drawLine(ink, Offset(right - eyeR, cy), Offset(right + eyeR, cy), eyeR * 0.32f)
         }
-        mood == Mood.HAPPY -> {
+        mood == Mood.HAPPY || dancing -> {
             drawCircle(ink, eyeR, Offset(left, cy))
             drawCircle(ink, eyeR, Offset(right, cy))
-            for (eye in 0 until 2) {
-                val ex = if (eye == 0) left else right
-                drawLine(Color.White, Offset(ex - eyeR * 0.5f, cy - eyeR * 1.6f), Offset(ex + eyeR * 0.5f, cy - eyeR * 1.6f), eyeR * 0.3f)
-                drawLine(Color.White, Offset(ex, cy - eyeR * 2.1f), Offset(ex, cy - eyeR * 1.1f), eyeR * 0.3f)
+            for (i in 0 until 2) {
+                val ex = if (i == 0) left else right
+                drawLine(Color.White, Offset(ex - eyeR * 0.45f, cy - eyeR * 1.7f),
+                    Offset(ex + eyeR * 0.45f, cy - eyeR * 1.7f), eyeR * 0.3f)
+                drawLine(Color.White, Offset(ex, cy - eyeR * 2.15f),
+                    Offset(ex, cy - eyeR * 1.25f), eyeR * 0.3f)
             }
+            drawCircle(colors.glow.copy(alpha = 0.55f), gap * 0.34f, Offset(cx - gap * 1.75f, cy + eyeR))
+            drawCircle(colors.glow.copy(alpha = 0.55f), gap * 0.34f, Offset(cx + gap * 1.75f, cy + eyeR))
         }
         else -> {
             drawCircle(ink, eyeR, Offset(left, cy))
             drawCircle(ink, eyeR, Offset(right, cy))
+            drawCircle(Color.White.copy(alpha = 0.8f), eyeR * 0.3f, Offset(left - eyeR * 0.3f, cy - eyeR * 0.35f))
+            drawCircle(Color.White.copy(alpha = 0.8f), eyeR * 0.3f, Offset(right - eyeR * 0.3f, cy - eyeR * 0.35f))
         }
     }
-    val mouthY = cy + eyeGap * 1.25f
+    if (mood == Mood.THIRSTY) {
+        drawCircle(colors.secondary, eyeR * 0.35f, Offset(cx + gap * 2f, cy - eyeR * 1.6f))
+    }
+    val mouthY = cy + gap * 1.25f
     when (mood) {
-        Mood.THIRSTY -> drawArcBox(
-            Rect(cx - eyeGap * 0.6f, mouthY + eyeGap * 0.3f, cx + eyeGap * 0.6f, mouthY + eyeGap),
-            180f, 180f, ink, eyeR * 0.28f
-        )
+        Mood.THIRSTY -> drawArcBox(Rect(cx - gap * 0.62f, mouthY + gap * 0.3f, cx + gap * 0.62f, mouthY + gap),
+            180f, 180f, ink, eyeR * 0.28f)
         Mood.SLEEPY -> drawLine(ink, Offset(cx - eyeR, mouthY), Offset(cx + eyeR, mouthY), eyeR * 0.32f)
-        Mood.HAPPY, Mood.DANCING -> drawOvalBox(ink, Rect(cx - eyeGap * 0.55f, mouthY - eyeR * 0.4f,
-            cx + eyeGap * 0.55f, mouthY + eyeR * 1.1f))
-        else -> drawArcBox(
-            Rect(cx - eyeGap * 0.6f, mouthY - eyeGap * 0.35f, cx + eyeGap * 0.6f, mouthY + eyeGap * 0.35f),
-            0f, 180f, ink, eyeR * 0.28f
-        )
+        Mood.HAPPY, Mood.DANCING -> drawOval(ink, topLeft = Offset(cx - gap * 0.55f, mouthY - eyeR * 0.4f),
+            size = Size(gap * 1.1f, eyeR * 1.5f))
+        else -> drawArcBox(Rect(cx - gap * 0.62f, mouthY - gap * 0.35f, cx + gap * 0.62f, mouthY + gap * 0.35f),
+            0f, 180f, ink, eyeR * 0.28f)
     }
 }
 
@@ -2260,41 +2310,32 @@ private fun DrawScope.drawParticles(
     for (i in 0 until 18) {
         val seed = (i * 37 % 100) / 100f
         val x = cx + (seed - 0.5f) * r * 3.4f
-        val fall = ((p + seed) % 1f)
-        val y = cy - r * 1.8f + fall * r * 3.4f
+        val y = cy - r * 1.8f + ((p + seed) % 1f) * r * 3.4f
         val color = when (i % 3) {
             0 -> colors.primary
             1 -> colors.glow
             else -> colors.secondary
         }
-        if (i % 2 == 0) {
-            drawCircle(color.copy(alpha = 0.85f), r * 0.07f, Offset(x, y))
-        } else {
-            drawRect(color.copy(alpha = 0.75f), Offset(x, y), androidx.compose.ui.geometry.Size(r * 0.12f, r * 0.18f))
-        }
+        if (i % 2 == 0) drawCircle(color.copy(alpha = 0.85f), r * 0.07f, Offset(x, y))
+        else drawRect(color.copy(alpha = 0.75f), Offset(x, y), Size(r * 0.12f, r * 0.18f))
     }
 }
 
-
 private fun DrawScope.drawOvalBox(color: Color, rect: Rect, alpha: Float = 1f) = drawOval(
-    color = color, topLeft = Offset(rect.left, rect.top),
-    size = androidx.compose.ui.geometry.Size(rect.width, rect.height), alpha = alpha
+    color = color, topLeft = Offset(rect.left, rect.top), size = Size(rect.width, rect.height), alpha = alpha
 )
 
-private fun DrawScope.drawRoundRectBox(
-    color: Color, rect: Rect, corner: Float, alpha: Float = 1f
-) = drawRoundRect(
-    color = color, topLeft = Offset(rect.left, rect.top),
-    size = androidx.compose.ui.geometry.Size(rect.width, rect.height),
-    cornerRadius = androidx.compose.ui.geometry.CornerRadius(corner, corner), alpha = alpha
-)
+private fun DrawScope.drawRoundRectBox(color: Color, rect: Rect, corner: Float, alpha: Float = 1f) =
+    drawRoundRect(
+        color = color, topLeft = Offset(rect.left, rect.top),
+        size = Size(rect.width, rect.height), cornerRadius = CornerRadius(corner, corner), alpha = alpha
+    )
 
 private fun DrawScope.drawArcBox(
     rect: Rect, start: Float, sweep: Float, color: Color, strokeWidth: Float
 ) = drawArc(
     color = color, startAngle = start, sweepAngle = sweep, useCenter = false,
-    topLeft = Offset(rect.left, rect.top),
-    size = androidx.compose.ui.geometry.Size(rect.width, rect.height),
+    topLeft = Offset(rect.left, rect.top), size = Size(rect.width, rect.height),
     style = Stroke(width = strokeWidth), alpha = 0.85f
 )
 ```
@@ -2307,6 +2348,7 @@ private fun DrawScope.drawArcBox(
 package com.sippy.app.ui
 
 import android.provider.Settings
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -2342,6 +2384,7 @@ import com.sippy.app.ui.screens.HistoryScreen
 import com.sippy.app.ui.screens.HomeScreen
 import com.sippy.app.ui.screens.OnboardingScreen
 import com.sippy.app.ui.screens.SettingsScreen
+import com.sippy.app.ui.theme.AppBackdrop
 import com.sippy.app.ui.theme.SippyTheme
 
 private data class Tab(val route: String, val label: String, val icon: Int)
@@ -2358,11 +2401,12 @@ private val tabs = listOf(
 fun SippyNavigation(viewModel: AppViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val reduceMotion = remember {
+    val systemReduceMotion = remember {
         try {
             Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         } catch (e: Exception) { false }
     }
+    val reduceMotion = systemReduceMotion || (state.settings?.reduceMotion ?: false)
     CompositionLocalProvider(LocalAnimationsEnabled provides !reduceMotion) {
         SippyTheme(state.settings?.themeMode ?: "system", state.settings?.accent ?: "aqua") {
             val nav = rememberNavController()
@@ -2407,7 +2451,9 @@ fun SippyNavigation(viewModel: AppViewModel) {
                     }
                 }
             ) { padding ->
-                NavHost(nav, startDestination = start, modifier = Modifier.padding(padding)) {
+                Box(Modifier.padding(padding).fillMaxSize()) {
+                    AppBackdrop(animationsEnabled = !reduceMotion)
+                    NavHost(nav, startDestination = start, modifier = Modifier.fillMaxSize()) {
                     composable("onboarding") { OnboardingScreen(viewModel::act) }
                     composable("home") { HomeScreen(state, viewModel::act) }
                     composable("friends") { FriendsScreen(state, viewModel::act) }
@@ -2416,6 +2462,7 @@ fun SippyNavigation(viewModel: AppViewModel) {
                     composable("settings") { SettingsScreen(state, viewModel::act, nav::navigate) }
                     composable("about") { AboutScreen(viewModel::act) { nav.popBackStack() } }
                     composable("dev") { DevOptionsScreen(state, viewModel::act) { nav.popBackStack() } }
+                }
                 }
             }
         }
@@ -2457,6 +2504,7 @@ import com.sippy.app.ai.SmartCoach
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 
 @Composable
 fun CoachScreen(state: UiState, onAction: (UiAction) -> Unit, onOpenSettings: () -> Unit) {
@@ -2480,7 +2528,7 @@ fun CoachScreen(state: UiState, onAction: (UiAction) -> Unit, onOpenSettings: ()
         Text("Local insights work offline. AI answers use your OpenRouter key only when you ask.")
         Spacer(Modifier.height(12.dp))
         SectionTitle("What the app notices (on device)")
-        Card(Modifier.fillMaxWidth()) {
+        GlassCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 SmartCoach.localInsights(context).forEach { insight ->
                     Text("• $insight", style = MaterialTheme.typography.bodyMedium)
@@ -2511,7 +2559,7 @@ fun CoachScreen(state: UiState, onAction: (UiAction) -> Unit, onOpenSettings: ()
         }
         state.coach.answer?.let { answer ->
             Spacer(Modifier.height(12.dp))
-            Card(Modifier.fillMaxWidth()) {
+            GlassCard(Modifier.fillMaxWidth()) {
                 Text(answer, modifier = Modifier.padding(16.dp))
             }
         }
@@ -2770,6 +2818,7 @@ import com.sippy.app.ui.FriendCanvas
 import com.sippy.app.ui.LocalAnimationsEnabled
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -2803,16 +2852,12 @@ fun FriendsScreen(state: UiState, onAction: (UiAction) -> Unit) {
             items(state.friends, key = { it.id }) { friend ->
                 val species = runCatching { Species.valueOf(friend.species) }.getOrDefault(Species.DROPLET)
                 val stage = stageFor(friend.growthPoints)
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (friend.id == state.activeFriend?.id)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    ),
+                GlassCard(
                     modifier = Modifier.combinedClickable(
                         onClick = { onAction(UiAction.SelectFriend(friend.id)) },
                         onLongClick = { menuFor = friend.id }
-                    )
+                    ),
+                    alpha = if (friend.id == state.activeFriend?.id) 0.3f else 0.12f
                 ) {
                     Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Box {
@@ -2942,6 +2987,7 @@ import com.sippy.app.ui.HistoryBars
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -2960,8 +3006,8 @@ fun HistoryScreen(state: UiState, onAction: (UiAction) -> Unit) {
             }
         }
         Spacer(Modifier.height(12.dp))
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp)) {
+        GlassCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
                 HistoryBars(state.history, cfg.goalMl, days, Modifier.fillMaxWidth())
             }
         }
@@ -2971,9 +3017,7 @@ fun HistoryScreen(state: UiState, onAction: (UiAction) -> Unit) {
             Text("Nothing logged today yet.")
         } else {
             state.drinks.forEach { drink ->
-                Card(
-                    Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                ) {
+                GlassCard(Modifier.fillMaxWidth().padding(vertical = 4.dp), alpha = 0.1f) {
                     Row(
                         Modifier.fillMaxWidth().padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -3059,6 +3103,7 @@ import com.sippy.app.ui.ProgressRing
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 import kotlinx.coroutines.delay
 
 @Composable
@@ -3102,14 +3147,8 @@ fun HomeScreen(state: UiState, onAction: (UiAction) -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         if (state.dev.simulate) {
-            Card(
-                colors = androidx.compose.material3.CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                )
-            ) {
-                Text("SIMULATE MODE — no changes are saved to the database",
-                    modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onErrorContainer)
-            }
+            GlassCard { Text("SIMULATE MODE — no changes are saved to the database",
+                modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.error) }
             Spacer(Modifier.height(8.dp))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
@@ -3157,15 +3196,17 @@ fun HomeScreen(state: UiState, onAction: (UiAction) -> Unit) {
             style = MaterialTheme.typography.bodySmall)
 
         Spacer(Modifier.height(12.dp))
-        ProgressRing(
-            progress = state.progress,
-            centerLabel = AmountFormat.display(state.effectiveTotalMl, cfg.units),
-            bottomLabel = "of ${AmountFormat.display(cfg.goalMl, cfg.units)} · ${(state.progress * 100).toInt()}%"
-        )
-        Text(
-            "Pace: ${(state.pace * 100).toInt()}% of the day elapsed",
-            style = MaterialTheme.typography.labelSmall
-        )
+        GlassCard(alpha = 0.12f) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                ProgressRing(
+                    progress = state.progress,
+                    centerLabel = AmountFormat.display(state.effectiveTotalMl, cfg.units),
+                    bottomLabel = "of ${AmountFormat.display(cfg.goalMl, cfg.units)} · ${(state.progress * 100).toInt()}%"
+                )
+                Text("Pace: ${(state.pace * 100).toInt()}% of the day elapsed",
+                    style = MaterialTheme.typography.labelSmall)
+            }
+        }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(150, 250, 500).forEach { ml ->
@@ -3192,8 +3233,8 @@ fun HomeScreen(state: UiState, onAction: (UiAction) -> Unit) {
         if (cfg.devUnlocked && cfg.debugOverlay) {
             Spacer(Modifier.height(16.dp))
             SectionTitle("Debug overlay")
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
+            GlassCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
                     Text("Mood: ${state.mood.label}")
                     Text("Pace: ${(state.pace * 100).toInt()}% · Progress: ${(state.progress * 100).toInt()}%")
                     Text("Target: ${cfg.goalMl} ml · Today: ${state.totalMl} ml (shown ${state.effectiveTotalMl})")
@@ -3468,6 +3509,14 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
         }
 
         SectionTitle("Appearance")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("Reduce motion")
+            Switch(checked = cfg.reduceMotion, onCheckedChange = { onAction(UiAction.ReduceMotion(it)) })
+        }
+        Text("Turns off bobbing, dancing and particle effects. The system animation setting is always respected too.",
+            style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(8.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             listOf("system", "light", "dark").forEach { mode ->
                 FilterChip(
@@ -3592,6 +3641,94 @@ fun AboutScreen(onAction: (UiAction) -> Unit, onBack: () -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
         TextButton(onClick = onBack) { Text("Back") }
+    }
+}
+```
+
+---
+
+## `app/src/main/java/com/sippy/app/ui/theme/Glass.kt`
+
+```kotlin
+package com.sippy.app.ui.theme
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+
+/** Frosted surface built from gradients: no bitmap, no external asset, works on API 26+. */
+@Composable
+fun GlassCard(
+    modifier: Modifier = Modifier,
+    corner: Int = 24,
+    alpha: Float = 0.16f,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val palette = LocalFriendColors.current
+    val shape = RoundedCornerShape(corner.dp)
+    val fill = Brush.linearGradient(
+        listOf(
+            Color.White.copy(alpha = alpha + 0.12f),
+            Color.White.copy(alpha = alpha * 0.6f),
+            palette.glow.copy(alpha = alpha * 0.7f)
+        )
+    )
+    val stroke = Brush.linearGradient(
+        listOf(
+            Color.White.copy(alpha = 0.75f),
+            palette.glow.copy(alpha = 0.5f),
+            Color.White.copy(alpha = 0.12f)
+        )
+    )
+    Box(
+        modifier
+            .shadow(14.dp, shape, ambientColor = palette.primary.copy(alpha = 0.25f))
+            .clip(shape)
+            .background(fill)
+            .border(1.dp, stroke, shape)
+    ) {
+        Canvas(Modifier.matchParentSize()) {
+            drawLine(
+                brush = Brush.linearGradient(
+                    listOf(Color.Transparent, Color.White.copy(alpha = 0.5f), Color.Transparent)
+                ),
+                start = Offset(size.width * 0.12f, 1f),
+                end = Offset(size.width * 0.88f, 1f),
+                strokeWidth = 1.5f
+            )
+        }
+        content()
+    }
+}
+
+/** Soft ambient field behind screens, inspired by the orbital reference. */
+@Composable
+fun AppBackdrop(modifier: Modifier = Modifier, animationsEnabled: Boolean = true) {
+    val palette = LocalFriendColors.current
+    val orb = Brush.radialGradient(
+        listOf(palette.glow.copy(alpha = 0.32f), Color.Transparent)
+    )
+    val deep = Brush.radialGradient(
+        listOf(palette.primary.copy(alpha = 0.18f), Color.Transparent)
+    )
+    Canvas(modifier.fillMaxSize()) {
+        drawRect(brush = deep)
+        drawCircle(brush = orb, radius = size.minDimension * 0.75f,
+            center = Offset(size.width * 0.82f, size.height * 0.14f))
+        drawCircle(brush = orb, radius = size.minDimension * 0.6f,
+            center = Offset(size.width * 0.08f, size.height * 0.82f))
     }
 }
 ```
@@ -4203,10 +4340,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view 1.1.1 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create 1.1.1 releases/sippy-debug.apk --repo "$GITHUB_REPOSITORY" \
+          if ! gh release view 1.2.0 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create 1.2.0 releases/sippy-debug.apk --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_REF_NAME" \
-              --title "Sippy 1.1.1" \
+              --title "Sippy 1.2.0" \
               --notes "CI-built debug APK for Android 8.0+ (API 26). Settings -> Check for updates reads this release."
           fi
       - name: Upload APK
@@ -4256,16 +4393,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs
-      - id: deployment
-        uses: actions/deploy-pages@v4
+
+  deploy:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      # GitHub's artifact metadata API can lag a second after upload. Wait, then retry once.
+      - name: Wait for artifact metadata
+        run: sleep 20
+      - id: first
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - name: Wait before retry
+        if: steps.first.outcome == 'failure'
+        run: sleep 45
+      - id: retry
+        if: steps.first.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+      - name: Fail if both attempts failed
+        if: steps.first.outcome == 'failure' && steps.retry.outcome == 'failure'
+        run: exit 1
 ```
 
 ---
@@ -4365,6 +4520,10 @@ Sippy/
         │           └── screens/{Onboarding.kt,Home.kt,Friends.kt,History.kt,Settings.kt,DevOptions.kt}
         └── test/java/com/sippy/app/domain/LogicTest.kt
 ```
+
+## Design
+
+The UI uses a reusable frosted-glass surface (`ui/theme/Glass.kt`) and an ambient orbital backdrop. Settings has a **Reduce motion** toggle that combines with the Android animation setting. Pets stay 2D Canvas art with gradient shading, extra expressions and smoother easing.
 
 ## Website
 
@@ -4505,88 +4664,80 @@ Install the release APK variant locally (`./gradlew assembleRelease`) and smoke-
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sippy — little friends, big sips</title>
-<meta name="description" content="A local-first water tracker with animated water friends. Download the Android APK.">
+<meta name="theme-color" content="#0b0716">
+<title>Sippy — hydrate in your orbit</title>
+<meta name="description" content="A local-first water tracker with animated friends. Download the Android APK.">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="intro" id="intro" aria-hidden="true">
-  <div class="intro-line">MEET YOUR</div>
-  <div class="intro-line">WATER</div>
-  <div class="intro-line">FRIENDS</div>
-  <div class="intro-bar"></div>
+  <div class="intro-inner">
+    <div class="intro-line i1">WELCOME TO</div>
+    <div class="intro-line i2">SIPPY'S</div>
+    <div class="intro-line i3">ORBIT</div>
+    <div class="intro-orbit"></div>
+  </div>
 </div>
-
-<canvas id="particles" aria-hidden="true"></canvas>
+<canvas id="stars" aria-hidden="true"></canvas>
 
 <header class="topbar">
-  <a class="brand" href="#top">SIPPY<span>®</span></a>
-  <nav>
-    <a href="#why">Why</a><a href="#friends">Friends</a><a href="#download">Download</a>
-    <a class="pill" href="#download">GET THE APK ↓</a>
-  </nav>
+  <a class="brand" href="#top"><img src="app-icon.png" alt=""> SIPPY</a>
+  <nav><a href="#why">Why</a><a href="#friends">Friends</a><a href="#download">Download</a>
+    <a class="pill" href="#download">GET APK ↓</a></nav>
 </header>
 
 <main id="top">
 <section class="hero">
   <div class="hero-copy">
-    <img class="app-icon" src="app-icon.png" alt="Sippy's cute blue water droplet friend">
     <p class="eyebrow">LOCAL-FIRST · ANDROID 8+ · NO ACCOUNT</p>
-    <h1><span class="line">DRINK</span><span class="line">WATER.</span><span class="line outline">MAKE</span><span class="line">A FRIEND.</span></h1>
-    <p class="lede">Sippy turns hydration into a tiny daily ritual. Four animated friends, real streaks, zero cloud. Now with an optional on-device AI coach.</p>
+    <h1><span>HYDRATE</span><span class="script">in your</span><span class="outline">ORBIT.</span></h1>
+    <p class="lede">Little water friends who blink, bounce, giggle and dance when you hit your goal. Your data stays on your device. Your key, your call.</p>
     <div class="cta-row">
-      <a class="big-button" href="#download">DOWNLOAD APK <span>↓</span></a>
-      <a class="text-button" href="#friends">Meet the friends →</a>
+      <a class="big-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.2.0/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.2.0</span> <b>↓</b></a>
+      <a class="text-button" href="#friends">Meet the crew →</a>
     </div>
   </div>
-  <div class="phone-wrap" aria-label="Illustration of the Sippy app home screen">
-    <div class="phone">
-      <div class="phone-top"><span>9:41</span><span>●●●</span></div>
-      <div class="friend" id="friendArt">
-        <div class="blob"></div><div class="eye left"></div><div class="eye right"></div><div class="smile"></div>
-        <div class="bubble b1"></div><div class="bubble b2"></div><div class="bubble b3"></div>
-      </div>
-      <div class="name">BLOBBY <small>Grown · Happy</small></div>
-      <div class="ring"><div class="ring-inner"><strong id="ringValue">1,750</strong><small>ml of 2,000</small></div></div>
-      <div class="buttons"><span>+150</span><span>+250</span><span>+500</span></div>
-    </div>
-    <div class="float-chip chip-a">STAY HYDRATED</div>
-    <div class="float-chip chip-b">NO TRACKING</div>
+
+  <div class="universe" aria-label="Sippy droplet friend inside orbital rings">
+    <div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><div class="orbit orbit-c"></div>
+    <div class="planet"><img src="app-icon.png" alt="Sippy water droplet friend"></div>
+    <div class="glass-float f1"><small>WE GROW</small><span>Every sip counts.</span></div>
+    <div class="glass-float f2"><small>WE CELEBRATE</small><span>Goal hit? Dance time.</span></div>
+    <div class="glass-float f3"><small>WE STAY LOCAL</small><span>No cloud. No ads.</span></div>
+    <div class="dust d1"></div><div class="dust d2"></div><div class="dust d3"></div>
   </div>
 </section>
 
 <div class="marquee"><div class="marquee-track">ONE MORE SIP · ONE MORE SIP · ONE MORE SIP · ONE MORE SIP · ONE MORE SIP ·&nbsp;</div></div>
 
 <section class="dark" id="why">
-  <div class="section-head"><span>01 / WHY</span><h2>Built for the everyday.</h2></div>
+  <div class="section-head"><span>01 / WHY</span><h2>You always know<br><em>where things stand.</em></h2></div>
   <div class="cards">
-    <article><h3>Friends that feel alive</h3><p>Blink, bob, giggle and dance. Droplet, Sprout, Kitty and Blobby each have their own moves.</p></article>
-    <article><h3>On-device by default</h3><p>Your logs, streaks and friends live in local storage. No account, no ads, no analytics.</p></article>
-    <article><h3>Smart, on your terms</h3><p>Local insights always work. Add your own OpenRouter key only if you want AI coaching.</p></article>
-    <article><h3>Grows with you</h3><p>Earn growth points for every sip and evolve from Baby to Elder.</p></article>
+    <article class="glass"><h3>We notice</h3><p>Moods follow your pace, your streak and the time of day. Blobby knows when you're behind.</p></article>
+    <article class="glass"><h3>We play</h3><p>Four friends, four personalities. Blink, bob, giggle, dance — all drawn live in code.</p></article>
+    <article class="glass"><h3>We remember</h3><p>Growth stages, streaks and seven or thirty days of history, stored only on your device.</p></article>
+    <article class="glass"><h3>We respect you</h3><p>Offline insights always work. Add your OpenRouter key only if you want AI coaching.</p></article>
   </div>
 </section>
 
-<section class="friends" id="friends">
-  <div class="section-head"><span>02 / THE CREW</span><h2>Meet the water friends.</h2></div>
+<section class="crew-section" id="friends">
+  <div class="section-head"><span>02 / THE CREW</span><h2>Four friends.<br><em>One daily ritual.</em></h2></div>
   <div class="crew">
-    <div class="crew-card"><div class="crew-art droplet"></div><h3>Droplet</h3><p>The original sip buddy.</p></div>
-    <div class="crew-card"><div class="crew-art sprout"></div><h3>Sprout</h3><p>Grows leaves, then flowers.</p></div>
-    <div class="crew-card"><div class="crew-art kitty"></div><h3>Kitty</h3><p>Bows, tail swishes, big hops.</p></div>
-    <div class="crew-card"><div class="crew-art blobby"></div><h3>Blobby</h3><p>Wobbles with pure joy.</p></div>
+    <div class="crew-card glass"><div class="crew-art droplet"></div><h3>Droplet</h3><p>The original sip buddy.</p></div>
+    <div class="crew-card glass"><div class="crew-art sprout"></div><h3>Sprout</h3><p>Leaves first, flowers later.</p></div>
+    <div class="crew-card glass"><div class="crew-art kitty"></div><h3>Kitty</h3><p>Bows, tail swishes, big hops.</p></div>
+    <div class="crew-card glass"><div class="crew-art blobby"></div><h3>Blobby</h3><p>Wobbles with pure joy.</p></div>
   </div>
 </section>
 
 <section class="download" id="download">
-  <div class="section-head light"><span>03 / GET IT</span><h2>Take Sippy with you.</h2></div>
-  <img class="app-icon small-icon" src="app-icon.png" alt="Sippy app icon">
-  <p>Android 8.0 (API 26) or newer. Download the APK, allow installation from your browser, and open it. Your data stays on your device.</p>
-  <a class="big-button dark-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.1.1/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.1.1</span> APK <span>↓</span></a>
-  <p class="small">Prefer to build it yourself? <a href="https://github.com/Cooreo/Sippy">Source on GitHub</a>. <a href="PRIVACY_POLICY.md">Privacy policy</a>.</p>
+  <div class="section-head"><span>03 / GET IT</span><h2>Make a friend.<br><em>Keep a promise.</em></h2></div>
+  <p>Android 8.0 (API 26) or newer. Download the APK, allow installation from your browser, and open it. No account, no sign-in, no tracking.</p>
+  <a class="big-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.2.0/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.2.0</span> <b>↓</b></a>
+  <p class="small">Build it yourself from <a href="https://github.com/Cooreo/Sippy">source</a>. Read the <a href="PRIVACY_POLICY.md">privacy policy</a>.</p>
 </section>
 </main>
-
-<footer><span>SIPPY · MADE FOR THE EVERYDAY SIP</span><span>NO CLOUD. NO ADS. JUST WATER.</span></footer>
+<footer><span>SIPPY · HYDRATE IN YOUR ORBIT</span><span>NO CLOUD. NO ADS. JUST WATER.</span></footer>
 <script src="script.js"></script>
 </body>
 </html>
@@ -4598,68 +4749,56 @@ Install the release APK variant locally (`./gradlew assembleRelease`) and smoke-
 
 ```javascript
 (function () {
-  const intro = document.getElementById('intro');
-  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (!reduce) setTimeout(() => intro.classList.add('hidden'), 1550);
+  var intro = document.getElementById('intro');
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduce) setTimeout(function () { intro.classList.add('hidden'); }, 1550);
 
-  const canvas = document.getElementById('particles');
+  // Dynamic download: always use the newest GitHub release APK asset.
+  var links = document.querySelectorAll('[data-download]');
+  if (links.length) {
+    fetch('https://api.github.com/repos/Cooreo/Sippy/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' }
+    }).then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (release) {
+        var apk = (release.assets || []).find(function (a) { return a.name.toLowerCase().endsWith('.apk'); });
+        if (!apk) return;
+        links.forEach(function (a) { a.href = apk.browser_download_url; });
+        document.querySelectorAll('[data-version]').forEach(function (el) {
+          el.textContent = String(release.tag_name || '').replace(/^v/, '');
+        });
+      }).catch(function () { /* static fallback stays in place */ });
+  }
+
+  var canvas = document.getElementById('stars');
   if (reduce || !canvas) return;
-  const ctx = canvas.getContext('2d');
-  const drops = [];
+  var ctx = canvas.getContext('2d');
+  var stars = [];
   function resize() {
-    canvas.width = window.innerWidth * devicePixelRatio;
-    canvas.height = window.innerHeight * devicePixelRatio;
+    canvas.width = innerWidth * devicePixelRatio;
+    canvas.height = innerHeight * devicePixelRatio;
     ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   }
   resize();
-  window.addEventListener('resize', resize);
-  for (let i = 0; i < 26; i++) {
-    drops.push({ x: Math.random() * innerWidth, y: Math.random() * innerHeight,
-      r: 3 + Math.random() * 9, speed: .2 + Math.random() * .7, hue: Math.random() > .5 ? '199,90%,60%' : '75,100%,60%' });
+  addEventListener('resize', resize);
+  for (var i = 0; i < 60; i++) {
+    stars.push({ x: Math.random() * innerWidth, y: Math.random() * innerHeight,
+      r: Math.random() * 1.6 + .3, s: Math.random() * .25 + .05,
+      c: Math.random() > .6 ? '102,230,255' : '255,255,255' });
   }
   function frame() {
     ctx.clearRect(0, 0, innerWidth, innerHeight);
-    for (const d of drops) {
-      d.y -= d.speed;
-      if (d.y < -20) { d.y = innerHeight + 20; d.x = Math.random() * innerWidth; }
+    for (var j = 0; j < stars.length; j++) {
+      var s = stars[j];
+      s.y -= s.s;
+      if (s.y < -2) { s.y = innerHeight + 2; s.x = Math.random() * innerWidth; }
       ctx.beginPath();
-      ctx.fillStyle = 'hsla(' + d.hue + ',.28)';
-      ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(' + s.c + ',' + (.25 + s.r * .25) + ')';
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
       ctx.fill();
     }
     requestAnimationFrame(frame);
   }
   frame();
-
-  // Always point the download button at the newest release asset.
-  const downloadLinks = document.querySelectorAll('[data-download]');
-  if (downloadLinks.length) {
-    fetch('https://api.github.com/repos/Cooreo/Sippy/releases/latest', {
-      headers: { Accept: 'application/vnd.github+json' }
-    })
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(release => {
-        const apk = (release.assets || []).find(a => a.name.toLowerCase().endsWith('.apk'));
-        if (!apk) return;
-        downloadLinks.forEach(a => { a.href = apk.browser_download_url; });
-        document.querySelectorAll('[data-version]').forEach(el => {
-          el.textContent = String(release.tag_name || '').replace(/^v/, '');
-        });
-      })
-      .catch(() => { /* keep the static fallback link */ });
-  }
-
-  const ring = document.getElementById('ringValue');
-  if (ring) {
-    let value = 0;
-    const target = 1750;
-    const tick = () => {
-      value = Math.min(target, value + 45);
-      ring.textContent = value.toLocaleString();
-      if (value < target) requestAnimationFrame(tick);
-    };
-    setTimeout(tick, 1800);
-  }
 })();
 ```
 
@@ -4668,123 +4807,78 @@ Install the release APK variant locally (`./gradlew assembleRelease`) and smoke-
 ## `docs/styles.css`
 
 ```css
-:root{--lime:#c8ff2e;--ink:#0b2b12;--purple:#1b0b2e;--violet:#7b2ff7;--cream:#fffdf3}
-*{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--cream);color:var(--ink);overflow-x:hidden}
+:root{--ink:#0b0716;--violet:#7b2ff7;--glow:#ff77d4;--cyan:#66e6ff;--lime:#c8ff2e;--paper:#f6f1ff}
+*{box-sizing:border-box}html{scroll-behavior:smooth}html,body{max-width:100%;overflow-x:hidden}
+body{margin:0;background:var(--ink);color:#fff;font-family:Inter,Arial,Helvetica,sans-serif}
 a{color:inherit}
-.topbar{position:sticky;top:0;z-index:20;display:flex;justify-content:space-between;align-items:center;padding:14px 4vw;background:rgba(200,255,46,.9);backdrop-filter:blur(8px);border-bottom:2px solid var(--ink)}
-.brand{font-weight:900;font-size:24px;letter-spacing:-1px;text-decoration:none}
-.brand span{font-size:9px;vertical-align:top}
-nav{display:flex;gap:22px;align-items:center;font-weight:800;font-size:13px;text-transform:uppercase}
-nav a{text-decoration:none}
-nav .pill{background:var(--ink);color:var(--lime);padding:10px 16px;border-radius:999px}
-.intro{position:fixed;inset:0;z-index:100;background:var(--purple);color:#fff;display:flex;flex-direction:column;justify-content:center;align-items:center;transition:transform .8s cubic-bezier(.7,0,.2,1);font-weight:900;font-size:clamp(40px,10vw,120px);line-height:.85;text-align:center;letter-spacing:-5px}
-.intro.hidden{transform:translateY(-100%)}
-.intro-line{opacity:0;transform:translateY(40px) rotate(-3deg);animation:introIn .5s forwards}
-.intro-line:nth-child(1){animation-delay:.15s;color:#c8ff2e}
-.intro-line:nth-child(2){animation-delay:.35s}
-.intro-line:nth-child(3){animation-delay:.55s;color:#c8ff2e}
-.intro-bar{height:8px;width:0;background:#c8ff2e;margin-top:36px;animation:bar 1.1s .2s forwards}
-@keyframes introIn{to{opacity:1;transform:translateY(0) rotate(-3deg)}}
-@keyframes bar{to{width:min(420px,70vw)}}
-#particles{position:fixed;inset:0;z-index:1;pointer-events:none}
-.hero{position:relative;z-index:2;display:grid;grid-template-columns:1.1fr .9fr;gap:4vw;min-height:92vh;align-items:center;padding:6vh 4vw 10vh;background:radial-gradient(circle at 80% 20%,#e8ff9e,transparent 45%),var(--lime)}
-.eyebrow{font-weight:900;letter-spacing:2px;font-size:12px}
-h1{font-size:clamp(56px,9vw,150px);line-height:.82;letter-spacing:-8px;margin:0 0 24px;text-transform:uppercase;font-weight:900}
-h1 .line{display:block;animation:floatY 4s ease-in-out infinite}
-h1 .line:nth-child(2){animation-delay:.4s}
-h1 .line:nth-child(3){animation-delay:.8s}
-h1 .outline{-webkit-text-stroke:3px var(--ink);color:transparent}
-.lede{font-size:18px;max-width:560px;font-weight:600;line-height:1.45}
-.cta-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:28px}
-.big-button{display:inline-flex;gap:20px;align-items:center;background:var(--ink);color:var(--lime);padding:18px 26px;text-decoration:none;font-weight:900;border-radius:4px;box-shadow:8px 8px 0 var(--violet);transition:transform .2s,box-shadow .2s}
-.big-button:hover{transform:translate(3px,3px);box-shadow:4px 4px 0 var(--violet)}
-.text-button{font-weight:900;text-decoration:none;border-bottom:3px solid var(--ink)}
-.phone-wrap{position:relative;display:flex;justify-content:center}
-.phone{width:min(360px,80vw);height:620px;background:#f7fbff;border:8px solid var(--ink);border-radius:44px;padding:18px;position:relative;box-shadow:18px 18px 0 rgba(11,43,18,.2);animation:tilt 7s ease-in-out infinite}
-.phone-top{display:flex;justify-content:space-between;font-size:12px;font-weight:900}
-.friend{position:relative;width:180px;height:180px;margin:26px auto 4px;animation:bob 2.6s ease-in-out infinite}
-.friend .blob{position:absolute;inset:18px 8px 12px;border-radius:48% 52% 45% 55%;background:#079cc9;box-shadow:inset -12px -12px 0 rgba(0,0,0,.08)}
-.friend .eye{position:absolute;top:74px;width:18px;height:24px;border-radius:50%;background:#083b52;animation:blink 4.4s infinite}
-.friend .eye.left{left:64px}.friend .eye.right{right:64px}
-.friend .smile{position:absolute;top:110px;left:76px;width:30px;height:16px;border-bottom:5px solid #083b52;border-radius:0 0 40px 40px}
-.bubble{position:absolute;border-radius:50%;background:#7dd3fc;opacity:.8;animation:rise 2.8s infinite}
-.bubble.b1{width:12px;height:12px;left:-8px;top:40px}.bubble.b2{width:8px;height:8px;right:-4px;top:80px;animation-delay:.6s}.bubble.b3{width:16px;height:16px;right:20px;top:10px;animation-delay:1.2s}
-.name{text-align:center;font-weight:900;font-size:20px}.name small{display:block;font-size:11px;font-weight:700;opacity:.6}
-.ring{width:210px;height:210px;margin:18px auto;border-radius:50%;background:conic-gradient(#079cc9 0 78%,#d9f2fb 78% 100%);display:grid;place-items:center}
-.ring-inner{width:168px;height:168px;border-radius:50%;background:#f7fbff;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.ring-inner strong{font-size:36px}.ring-inner small{opacity:.6}
-.buttons{display:flex;gap:8px;justify-content:center;margin-top:18px}
-.buttons span{background:#079cc9;color:#fff;padding:12px 14px;border-radius:12px;font-weight:900;font-size:13px}
-.float-chip{position:absolute;background:var(--ink);color:var(--lime);padding:10px 16px;font-weight:900;font-size:12px;transform:rotate(-6deg);box-shadow:6px 6px 0 var(--violet)}
-.chip-a{left:-30px;top:90px}.chip-b{right:-20px;bottom:90px;transform:rotate(6deg)}
-.marquee{overflow:hidden;background:var(--ink);color:var(--lime);font-weight:900;font-size:26px;padding:12px 0;white-space:nowrap;position:relative;z-index:2}
-.marquee-track{display:inline-block;animation:scroll 16s linear infinite}
+.intro{position:fixed;inset:0;z-index:100;background:radial-gradient(circle at 50% 50%,#2b0f54,#0b0716 70%);display:grid;place-items:center;transition:transform .9s cubic-bezier(.7,0,.2,1),opacity .6s}
+.intro.hidden{transform:translateY(-100%);opacity:0;pointer-events:none}
+.intro-inner{text-align:center;font-weight:900;font-size:clamp(46px,11vw,120px);line-height:.82;letter-spacing:-6px}
+.intro-line{opacity:0;transform:translateY(50px) rotate(-4deg);animation:introIn .55s forwards}
+.i1{color:var(--cyan);animation-delay:.1s}.i2{animation-delay:.35s}.i3{color:var(--glow);animation-delay:.6s}
+.intro-orbit{width:0;height:3px;margin:38px auto 0;border-radius:9px;background:linear-gradient(90deg,var(--cyan),var(--glow));animation:bar 1s .3s forwards}
+@keyframes introIn{to{opacity:1;transform:none}}@keyframes bar{to{width:min(420px,72vw)}}
+#stars{position:fixed;inset:0;z-index:0;pointer-events:none}
+.topbar{position:sticky;top:0;z-index:20;display:flex;justify-content:space-between;align-items:center;padding:14px 4vw;background:rgba(11,7,22,.72);backdrop-filter:blur(18px);border-bottom:1px solid rgba(255,255,255,.12)}
+.brand{display:flex;gap:10px;align-items:center;font-weight:900;letter-spacing:2px;text-decoration:none}.brand img{width:32px;height:32px}
+nav{display:flex;gap:22px;align-items:center;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1px}
+nav a{text-decoration:none;opacity:.85}nav a:hover{opacity:1}
+nav .pill{padding:10px 16px;border-radius:999px;background:var(--lime);color:var(--ink);opacity:1}
+.hero{position:relative;z-index:2;display:grid;grid-template-columns:1.05fr .95fr;gap:3vw;align-items:center;min-height:94vh;padding:8vh 4vw 10vh}
+.eyebrow{font-size:11px;letter-spacing:3px;font-weight:900;color:var(--cyan)}
+h1{font-size:clamp(54px,8.6vw,132px);line-height:.82;letter-spacing:-7px;margin:12px 0 24px;text-transform:uppercase}
+h1 span{display:block}h1 .script{font-family:Georgia,serif;font-style:italic;text-transform:none;font-weight:400;letter-spacing:-3px;color:var(--glow);font-size:.86em;margin:2px 0 6px 8vw}
+h1 .outline{-webkit-text-stroke:2px rgba(255,255,255,.8);color:transparent}
+.lede{max-width:540px;line-height:1.55;opacity:.82;font-size:17px}
+.cta-row{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:30px}
+.big-button{display:inline-flex;gap:18px;align-items:center;padding:18px 24px;border-radius:999px;text-decoration:none;font-weight:900;letter-spacing:.5px;color:var(--ink);background:linear-gradient(100deg,var(--lime),#eaff9a);box-shadow:0 14px 40px rgba(200,255,46,.25);transition:transform .25s,box-shadow .25s}
+.big-button:hover{transform:translateY(-3px);box-shadow:0 20px 50px rgba(200,255,46,.38)}
+.big-button b{font-size:22px}.text-button{font-weight:800;text-decoration:none;border-bottom:2px solid var(--glow)}
+.universe{position:relative;height:min(62vw,620px);display:grid;place-items:center}
+.planet{position:relative;width:min(44vw,340px);height:min(44vw,340px);border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 35% 30%,rgba(255,255,255,.18),rgba(123,47,247,.22) 55%,transparent 70%);box-shadow:0 0 90px rgba(123,47,247,.5),inset 0 0 40px rgba(255,255,255,.06);animation:float 6s ease-in-out infinite}
+.planet img{width:74%;height:74%;object-fit:contain;filter:drop-shadow(0 18px 30px rgba(0,0,0,.45))}
+.orbit{position:absolute;border:1px solid rgba(255,255,255,.24);border-radius:50%;transform-style:preserve-3d}
+.orbit-a{width:min(58vw,520px);height:min(58vw,520px);border-top-color:var(--glow);animation:spin 18s linear infinite}
+.orbit-b{width:min(72vw,650px);height:min(36vw,320px);transform:rotateX(64deg) rotate(-18deg);border-color:rgba(102,230,255,.45);animation:spin2 24s linear infinite}
+.orbit-c{width:min(80vw,720px);height:min(42vw,380px);transform:rotateX(70deg) rotate(24deg);border-color:rgba(255,119,212,.35);animation:spin3 30s linear infinite}
+.glass-float{position:absolute;padding:12px 16px;border-radius:18px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.24);backdrop-filter:blur(14px);box-shadow:0 16px 40px rgba(0,0,0,.35);animation:float 5s ease-in-out infinite}
+.glass-float small{display:block;font-size:9px;letter-spacing:2px;color:var(--cyan);font-weight:900}.glass-float span{font-size:13px;font-weight:700}
+.f1{top:10%;left:-2%;animation-delay:.2s}.f2{top:48%;right:-6%;animation-delay:1s}.f3{bottom:8%;left:8%;animation-delay:1.8s}
+.dust{position:absolute;border-radius:50%;background:var(--glow);filter:blur(1px);animation:twinkle 2.6s infinite}
+.d1{width:6px;height:6px;top:18%;right:12%}.d2{width:4px;height:4px;bottom:24%;right:20%;background:var(--cyan);animation-delay:.7s}.d3{width:8px;height:8px;top:60%;left:4%;background:var(--lime);animation-delay:1.3s}
+.marquee{position:relative;z-index:2;overflow:hidden;background:linear-gradient(90deg,#2b0f54,var(--violet),#2b0f54);padding:12px 0;font-weight:900;letter-spacing:2px;white-space:nowrap}
+.marquee-track{display:inline-block;animation:scroll 18s linear infinite}
+.dark,.crew-section,.download{position:relative;z-index:2;padding:10vh 4vw}
+.dark{background:linear-gradient(160deg,#170a2e,#0b0716)}
+.section-head{display:flex;flex-direction:column;gap:14px;margin-bottom:36px}
+.section-head span{font-size:11px;letter-spacing:3px;font-weight:900;color:var(--lime)}
+.section-head h2{font-size:clamp(36px,6vw,76px);line-height:.95;letter-spacing:-4px;margin:0;text-transform:uppercase}
+.section-head h2 em{font-family:Georgia,serif;font-weight:400;text-transform:none;color:var(--glow);letter-spacing:-2px}
+.glass{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(14px);box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.cards,.crew{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px}
+.cards article,.crew-card{padding:24px;border-radius:22px;transition:transform .25s,border-color .25s}
+.cards article:hover,.crew-card:hover{transform:translateY(-8px);border-color:var(--glow)}
+.cards h3,.crew-card h3{margin:0 0 10px;color:var(--cyan)}.cards p,.crew-card p{margin:0;line-height:1.5;opacity:.8}
+.crew-section{background:radial-gradient(circle at 20% 30%,rgba(123,47,247,.25),transparent 50%),#120a26}
+.crew-card{text-align:center}.crew-card h3{color:#fff}
+.crew-art{width:100px;height:100px;margin:0 auto 18px;position:relative;animation:float 3s ease-in-out infinite;box-shadow:inset -12px -16px 30px rgba(0,0,0,.25),inset 10px 10px 25px rgba(255,255,255,.35)}
+.crew-art:after{content:"";position:absolute;left:30px;top:44px;width:12px;height:12px;border-radius:50%;background:#0b0716;box-shadow:28px 0 0 #0b0716}
+.droplet{border-radius:50% 50% 50% 50%/60% 60% 40% 40%;background:linear-gradient(140deg,#b6f0ff,#079cc9 60%,#075985)}
+.sprout{border-radius:45% 55% 50% 50%;background:linear-gradient(140deg,#bbf7d0,#34d399,#047857)}
+.kitty{border-radius:46%;background:linear-gradient(140deg,#ddd6fe,#a78bfa,#6d28d9)}
+.blobby{border-radius:55% 45% 50% 50%;background:linear-gradient(140deg,#fed7aa,#fb923c,#c2410c)}
+.download{background:radial-gradient(circle at 80% 20%,rgba(200,255,46,.14),transparent 45%),#0b0716}
+.download p{max-width:620px;line-height:1.6;opacity:.85}.small{font-size:13px}.small a{color:var(--cyan)}
+footer{position:relative;z-index:2;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;padding:24px 4vw;background:#07040f;font-size:11px;letter-spacing:2px;font-weight:900;opacity:.85}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes spin2{to{transform:rotateX(64deg) rotate(342deg)}}
+@keyframes spin3{to{transform:rotateX(70deg) rotate(-336deg)}}
+@keyframes twinkle{0%,100%{opacity:.2;transform:scale(.7)}50%{opacity:1;transform:scale(1.2)}}
 @keyframes scroll{to{transform:translateX(-50%)}}
-.dark{background:linear-gradient(160deg,var(--purple),#3b1170);color:#fff;padding:10vh 4vw;position:relative;z-index:2}
-.section-head{display:flex;align-items:baseline;gap:20px;flex-wrap:wrap;margin-bottom:32px}
-.section-head span{font-weight:900;letter-spacing:2px;font-size:12px;color:#c8ff2e}
-.section-head h2{font-size:clamp(34px,6vw,78px);letter-spacing:-4px;line-height:.9;margin:0;text-transform:uppercase}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px}
-.cards article{padding:24px;border:2px solid rgba(255,255,255,.3);border-radius:18px;background:rgba(255,255,255,.06);transition:transform .25s}
-.cards article:hover{transform:translateY(-8px) rotate(-1deg);border-color:#c8ff2e}
-.cards h3{font-size:22px;margin:0 0 10px;color:#c8ff2e}.cards p{line-height:1.5;margin:0}
-.friends{padding:10vh 4vw;background:#fff3d1;position:relative;z-index:2}
-.crew{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px}
-.crew-card{background:#fff;border:3px solid var(--ink);padding:20px;border-radius:20px;text-align:center;transition:transform .2s}
-.crew-card:hover{transform:translateY(-10px) rotate(2deg)}
-.crew-art{width:100px;height:100px;margin:0 auto 16px;position:relative;animation:bob 3s ease-in-out infinite}
-.crew-art:after{content:"";position:absolute;left:30px;top:42px;width:14px;height:14px;border-radius:50%;background:var(--ink);box-shadow:26px 0 0 var(--ink)}
-.droplet{background:#079cc9;border-radius:50% 50% 50% 50% / 60% 60% 40% 40%}
-.sprout{background:#34d399;border-radius:40% 60% 50% 50%}
-.kitty{background:#7c3aed;border-radius:45% 45% 40% 40%}
-.blobby{background:#fb923c;border-radius:55% 45% 50% 50%}
-.crew-card h3{margin:0;font-size:24px}.crew-card p{margin:6px 0 0;opacity:.7}
-.download{padding:10vh 4vw;background:var(--lime);position:relative;z-index:2}
-.section-head.light span{color:var(--ink)}
-.download p{max-width:620px;font-weight:600;line-height:1.5}
-.dark-button{background:var(--purple);color:#fff;box-shadow:8px 8px 0 var(--ink)}
-.small{font-size:13px}.small a{font-weight:900}
-footer{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;padding:24px 4vw;background:var(--ink);color:#fff;font-weight:900;font-size:12px;letter-spacing:2px;position:relative;z-index:2}
-@keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
-@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
-@keyframes tilt{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg)}}
-@keyframes blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}
-@keyframes rise{from{transform:translateY(20px);opacity:0}to{transform:translateY(-30px);opacity:0}40%{opacity:.8}}
-@media(max-width:860px){.hero{grid-template-columns:1fr;padding-top:10vh}.phone{margin-top:40px}h1{letter-spacing:-4px}.float-chip{display:none}}
-@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.intro{display:none}#particles{display:none}}
-
-.app-icon{width:96px;height:96px;display:block;margin-bottom:12px;filter:drop-shadow(6px 8px 0 rgba(11,43,18,.2));animation:bob 3.2s ease-in-out infinite}
-.small-icon{width:74px;height:74px;margin-bottom:18px}
-
-
-/* Mobile hardening */
-html, body { max-width: 100%; overflow-x: hidden; }
-.intro.hidden { pointer-events: none; }
-@media (max-width: 600px) {
-  .topbar { padding: 10px 16px; }
-  .brand { font-size: 20px; }
-  nav { gap: 0; }
-  nav a:not(.pill) { display: none; }
-  nav .pill { padding: 8px 12px; font-size: 11px; }
-  .hero { padding: 5vh 16px 8vh; min-height: auto; gap: 0; }
-  h1 { font-size: clamp(42px, 13vw, 68px); letter-spacing: -3px; line-height: .88; }
-  .lede { font-size: 15px; }
-  .cta-row { flex-direction: column; align-items: flex-start; }
-  .big-button { width: 100%; justify-content: space-between; padding: 16px 18px; box-shadow: 5px 5px 0 var(--violet); }
-  .phone { height: 520px; width: min(300px, 84vw); }
-  .friend { transform: scale(.85); }
-  .ring { width: 180px; height: 180px; }
-  .ring-inner { width: 144px; height: 144px; }
-  .marquee { font-size: 18px; }
-  .dark, .friends, .download { padding: 8vh 16px; }
-  .section-head h2 { font-size: clamp(30px, 9vw, 48px); letter-spacing: -2px; }
-  .cards, .crew { grid-template-columns: 1fr; }
-  footer { padding: 20px 16px; }
-  .app-icon { width: 72px; height: 72px; }
-  .small-icon { width: 62px; height: 62px; }
-}
+@media(max-width:860px){.hero{grid-template-columns:1fr;padding-top:7vh}.universe{height:460px;margin-top:20px}h1{letter-spacing:-4px}.glass-float{display:none}.orbit-b,.orbit-c{width:90vw;height:45vw}}
+@media(max-width:600px){.topbar{padding:10px 16px}.brand{font-size:18px}.brand img{width:26px;height:26px}nav{gap:0}nav a:not(.pill){display:none}nav .pill{padding:8px 12px;font-size:10px}.hero{padding:5vh 16px 8vh}h1{font-size:clamp(42px,13vw,72px);letter-spacing:-3px}h1 .script{margin-left:12vw}.lede{font-size:15px}.cta-row{flex-direction:column;align-items:stretch}.big-button{width:100%;justify-content:space-between;padding:16px 18px}.universe{height:360px}.planet{width:230px;height:230px}.orbit-a{width:320px;height:320px}.dark,.crew-section,.download{padding:8vh 16px}.section-head h2{font-size:clamp(30px,9vw,48px);letter-spacing:-2px}.marquee{font-size:18px}footer{padding:20px 16px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.intro{display:none}#stars{display:none}}
 ```
 
 ---

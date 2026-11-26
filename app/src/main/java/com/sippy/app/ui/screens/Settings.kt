@@ -126,6 +126,14 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
         }
 
         SectionTitle("Appearance")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("Reduce motion")
+            Switch(checked = cfg.reduceMotion, onCheckedChange = { onAction(UiAction.ReduceMotion(it)) })
+        }
+        Text("Turns off bobbing, dancing and particle effects. The system animation setting is always respected too.",
+            style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(8.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             listOf("system", "light", "dark").forEach { mode ->
                 FilterChip(

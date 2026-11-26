@@ -36,7 +36,8 @@ data class Settings(
     val lastProcessedDay: String = "",
     val debugOverlay: Boolean = false,
     val lastUpdateCheckDay: String = "",
-    val openRouterKey: String = ""
+    val openRouterKey: String = "",
+    val reduceMotion: Boolean = false
 )
 
 private object Keys {
@@ -58,6 +59,7 @@ private object Keys {
     val DEBUG = booleanPreferencesKey("debug_overlay")
     val UPDATE_CHECK = stringPreferencesKey("last_update_check_day")
     val OPENROUTER_KEY = stringPreferencesKey("openrouter_api_key")
+    val REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
 }
 
 class SettingsRepository(private val context: Context) {
@@ -82,7 +84,8 @@ class SettingsRepository(private val context: Context) {
                 lastProcessedDay = p[Keys.PROCESSED] ?: "",
                 debugOverlay = p[Keys.DEBUG] ?: false,
                 lastUpdateCheckDay = p[Keys.UPDATE_CHECK] ?: "",
-                openRouterKey = p[Keys.OPENROUTER_KEY] ?: ""
+                openRouterKey = p[Keys.OPENROUTER_KEY] ?: "",
+                reduceMotion = p[Keys.REDUCE_MOTION] ?: false
             )
         }
 
@@ -116,6 +119,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setDebugOverlay(enabled: Boolean) = set(Keys.DEBUG, enabled)
     suspend fun setUpdateCheckDay(day: String) = set(Keys.UPDATE_CHECK, day)
     suspend fun setOpenRouterKey(key: String) = set(Keys.OPENROUTER_KEY, key.trim())
+    suspend fun setReduceMotion(enabled: Boolean) = set(Keys.REDUCE_MOTION, enabled)
 
     suspend fun clearAll() = context.settingsStore.edit { it.clear() }
 }

@@ -46,6 +46,7 @@ import com.sippy.app.ui.ProgressRing
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 import kotlinx.coroutines.delay
 
 @Composable
@@ -89,14 +90,8 @@ fun HomeScreen(state: UiState, onAction: (UiAction) -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         if (state.dev.simulate) {
-            Card(
-                colors = androidx.compose.material3.CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                )
-            ) {
-                Text("SIMULATE MODE — no changes are saved to the database",
-                    modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onErrorContainer)
-            }
+            GlassCard { Text("SIMULATE MODE — no changes are saved to the database",
+                modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.error) }
             Spacer(Modifier.height(8.dp))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
@@ -144,15 +139,17 @@ fun HomeScreen(state: UiState, onAction: (UiAction) -> Unit) {
             style = MaterialTheme.typography.bodySmall)
 
         Spacer(Modifier.height(12.dp))
-        ProgressRing(
-            progress = state.progress,
-            centerLabel = AmountFormat.display(state.effectiveTotalMl, cfg.units),
-            bottomLabel = "of ${AmountFormat.display(cfg.goalMl, cfg.units)} · ${(state.progress * 100).toInt()}%"
-        )
-        Text(
-            "Pace: ${(state.pace * 100).toInt()}% of the day elapsed",
-            style = MaterialTheme.typography.labelSmall
-        )
+        GlassCard(alpha = 0.12f) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                ProgressRing(
+                    progress = state.progress,
+                    centerLabel = AmountFormat.display(state.effectiveTotalMl, cfg.units),
+                    bottomLabel = "of ${AmountFormat.display(cfg.goalMl, cfg.units)} · ${(state.progress * 100).toInt()}%"
+                )
+                Text("Pace: ${(state.pace * 100).toInt()}% of the day elapsed",
+                    style = MaterialTheme.typography.labelSmall)
+            }
+        }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(150, 250, 500).forEach { ml ->
@@ -179,8 +176,8 @@ fun HomeScreen(state: UiState, onAction: (UiAction) -> Unit) {
         if (cfg.devUnlocked && cfg.debugOverlay) {
             Spacer(Modifier.height(16.dp))
             SectionTitle("Debug overlay")
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
+            GlassCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp)) {
                     Text("Mood: ${state.mood.label}")
                     Text("Pace: ${(state.pace * 100).toInt()}% · Progress: ${(state.progress * 100).toInt()}%")
                     Text("Target: ${cfg.goalMl} ml · Today: ${state.totalMl} ml (shown ${state.effectiveTotalMl})")

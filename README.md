@@ -41,6 +41,10 @@ Sippy/
         └── test/java/com/sippy/app/domain/LogicTest.kt
 ```
 
+## Design
+
+The UI uses a reusable frosted-glass surface (`ui/theme/Glass.kt`) and an ambient orbital backdrop. Settings has a **Reduce motion** toggle that combines with the Android animation setting. Pets stay 2D Canvas art with gradient shading, extra expressions and smoother easing.
+
 ## Website
 
 `docs/` is the GitHub Pages source (enable Pages → Deploy from a branch → current branch → `/docs`). It has a animated intro, floating particles and a download button pointing at the release APK.

@@ -27,6 +27,7 @@ import com.sippy.app.ai.SmartCoach
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 
 @Composable
 fun CoachScreen(state: UiState, onAction: (UiAction) -> Unit, onOpenSettings: () -> Unit) {
@@ -50,7 +51,7 @@ fun CoachScreen(state: UiState, onAction: (UiAction) -> Unit, onOpenSettings: ()
         Text("Local insights work offline. AI answers use your OpenRouter key only when you ask.")
         Spacer(Modifier.height(12.dp))
         SectionTitle("What the app notices (on device)")
-        Card(Modifier.fillMaxWidth()) {
+        GlassCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 SmartCoach.localInsights(context).forEach { insight ->
                     Text("• $insight", style = MaterialTheme.typography.bodyMedium)
@@ -81,7 +82,7 @@ fun CoachScreen(state: UiState, onAction: (UiAction) -> Unit, onOpenSettings: ()
         }
         state.coach.answer?.let { answer ->
             Spacer(Modifier.height(12.dp))
-            Card(Modifier.fillMaxWidth()) {
+            GlassCard(Modifier.fillMaxWidth()) {
                 Text(answer, modifier = Modifier.padding(16.dp))
             }
         }

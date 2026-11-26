@@ -33,6 +33,7 @@ import com.sippy.app.ui.HistoryBars
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -51,8 +52,8 @@ fun HistoryScreen(state: UiState, onAction: (UiAction) -> Unit) {
             }
         }
         Spacer(Modifier.height(12.dp))
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp)) {
+        GlassCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp)) {
                 HistoryBars(state.history, cfg.goalMl, days, Modifier.fillMaxWidth())
             }
         }
@@ -62,9 +63,7 @@ fun HistoryScreen(state: UiState, onAction: (UiAction) -> Unit) {
             Text("Nothing logged today yet.")
         } else {
             state.drinks.forEach { drink ->
-                Card(
-                    Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                ) {
+                GlassCard(Modifier.fillMaxWidth().padding(vertical = 4.dp), alpha = 0.1f) {
                     Row(
                         Modifier.fillMaxWidth().padding(12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
