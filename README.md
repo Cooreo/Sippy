@@ -57,6 +57,10 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 The launcher icon is a vector drawable plus an adaptive icon XML in `app/src/main/res`; no binary assets are needed. To generate PNG densities from the vector in Android Studio: right-click `ic_launcher_foreground.xml` → Generate → Image Asset, or use `mipmap` density folders produced by the Asset Studio wizard. For Play, export a 512×512 PNG from the same vector (e.g. Android Studio's Image Asset preview or a vector → PNG converter).
 
+## Updates
+
+Settings has a **Check for updates** button. The app also checks the latest GitHub release once per day using `https://api.github.com/repos/Cooreo/Sippy/releases/latest`. If a newer tag exists, a **Download update** button opens the release APK in the browser. Nothing is downloaded or installed automatically. Built APKs are kept in `releases/`.
+
 ## Developer options
 
 Settings → About → tap "Version 1.0.0 (1)" seven times. The unlocked flag is stored in DataStore. Developer options include mood/animation previews, growth and streak editors, progress simulation (never writes), time override (preview only), test friends, fake history, a test notification, debug overlay, and a lock button.

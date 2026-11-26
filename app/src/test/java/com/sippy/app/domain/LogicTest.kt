@@ -45,7 +45,7 @@ class LogicTest {
 
     @Test
     fun streakExtendsOnlyFromConsecutiveDays() {
-        assertEquals(Pair(4, 4), StreakLogic.afterDay(true, true, 3, 5))
+        assertEquals(Pair(4, 5), StreakLogic.afterDay(true, true, 3, 5))
         assertEquals(Pair(1, 5), StreakLogic.afterDay(true, false, 3, 5))
         assertEquals(Pair(0, 5), StreakLogic.afterDay(false, true, 3, 5))
     }

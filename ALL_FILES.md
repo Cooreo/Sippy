@@ -155,7 +155,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }
 
@@ -467,7 +467,8 @@ data class Settings(
     val bestStreak: Int = 0,
     val lastCelebratedDay: String = "",
     val lastProcessedDay: String = "",
-    val debugOverlay: Boolean = false
+    val debugOverlay: Boolean = false,
+    val lastUpdateCheckDay: String = ""
 )
 
 private object Keys {
@@ -487,6 +488,7 @@ private object Keys {
     val CELEBRATED = stringPreferencesKey("last_celebrated_day")
     val PROCESSED = stringPreferencesKey("last_processed_day")
     val DEBUG = booleanPreferencesKey("debug_overlay")
+    val UPDATE_CHECK = stringPreferencesKey("last_update_check_day")
 }
 
 class SettingsRepository(private val context: Context) {
@@ -509,7 +511,8 @@ class SettingsRepository(private val context: Context) {
                 bestStreak = p[Keys.BEST] ?: 0,
                 lastCelebratedDay = p[Keys.CELEBRATED] ?: "",
                 lastProcessedDay = p[Keys.PROCESSED] ?: "",
-                debugOverlay = p[Keys.DEBUG] ?: false
+                debugOverlay = p[Keys.DEBUG] ?: false,
+                lastUpdateCheckDay = p[Keys.UPDATE_CHECK] ?: ""
             )
         }
 
@@ -541,6 +544,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setCelebratedDay(day: String) = set(Keys.CELEBRATED, day)
     suspend fun setProcessedDay(day: String) = set(Keys.PROCESSED, day)
     suspend fun setDebugOverlay(enabled: Boolean) = set(Keys.DEBUG, enabled)
+    suspend fun setUpdateCheckDay(day: String) = set(Keys.UPDATE_CHECK, day)
 
     suspend fun clearAll() = context.settingsStore.edit { it.clear() }
 }
@@ -1330,6 +1334,10 @@ import com.sippy.app.domain.MoodCalculator
 import com.sippy.app.domain.Species
 import com.sippy.app.notifications.Notifier
 import com.sippy.app.notifications.ReminderScheduler
+import com.sippy.app.updates.UpdateChecker
+import com.sippy.app.updates.UpdateInfo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1352,6 +1360,13 @@ data class DevState(
     val animationSerial: Long = 0L,
     val fakeTime: Boolean = false,
     val fakeHours: Int = 0
+)
+
+data class UpdateState(
+    val busy: Boolean = false,
+    val info: UpdateInfo? = null,
+    val available: Boolean = false,
+    val message: String? = null
 )
 
 data class Feedback(
@@ -1378,7 +1393,8 @@ data class UiState(
     val pace: Float = 0f,
     val mood: Mood = Mood.CONTENT,
     val dev: DevState = DevState(),
-    val feedback: Feedback = Feedback()
+    val feedback: Feedback = Feedback(),
+    val update: UpdateState = UpdateState()
 )
 
 sealed interface UiAction {
@@ -1402,6 +1418,7 @@ sealed interface UiAction {
     data object UnlockDev : UiAction
     data object LockDev : UiAction
     data object ClearToast : UiAction
+    data class CheckUpdate(val manual: Boolean) : UiAction
     data class Simulate(val enabled: Boolean) : UiAction
     data class SimulatePercent(val percent: Float) : UiAction
     data class ForceMood(val mood: Mood?) : UiAction
@@ -1431,6 +1448,7 @@ class AppViewModel(
 
     private val _dev = MutableStateFlow(DevState())
     private val _feedback = MutableStateFlow(Feedback())
+    private val _update = MutableStateFlow(UpdateState())
 
     private val dayFlow: Flow<String> = clock.tick
         .map { DayKeys.key(it, clock.zone()) }
@@ -1450,8 +1468,15 @@ class AppViewModel(
         Five(c.first, c.second, c.third, history, dev)
     }
 
-    val state = combine(loaded, clock.tick, _feedback) { l, now, feedback -> assemble(l, now, feedback) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), UiState())
+    private val withClock = combine(loaded, clock.tick) { l, now -> l to now }
+
+    private val withFeedback = combine(withClock, _feedback) { pair, feedback ->
+        Triple(pair.first, pair.second, feedback)
+    }
+
+    val state = combine(withFeedback, _update) { triple, update ->
+        assemble(triple.first, triple.second, triple.third, update)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), UiState())
 
     private data class Five(
         val settings: Settings,
@@ -1461,7 +1486,7 @@ class AppViewModel(
         val dev: DevState
     )
 
-    private fun assemble(l: Five, now: Long, feedback: Feedback): UiState {
+    private fun assemble(l: Five, now: Long, feedback: Feedback, update: UpdateState): UiState {
         val cfg = l.settings
         val active = l.friends.firstOrNull { it.id == cfg.activeFriendId } ?: l.friends.firstOrNull()
         val effective = if (l.dev.simulate)
@@ -1484,7 +1509,8 @@ class AppViewModel(
                 effective, cfg.goalMl, now, clock.zone(), cfg.wakeStartHour, cfg.wakeEndHour
             ),
             dev = l.dev,
-            feedback = feedback
+            feedback = feedback,
+            update = update
         )
     }
 
@@ -1508,6 +1534,14 @@ class AppViewModel(
         }
         viewModelScope.launch {
             clock.tick.collect { repository.ensureDayRollover() }
+        }
+        viewModelScope.launch {
+            val cfg = settings.snapshot()
+            val day = DayKeys.key(clock.now(), clock.zone())
+            if (cfg.lastUpdateCheckDay != day) {
+                settings.setUpdateCheckDay(day)
+                checkUpdate(manual = false)
+            }
         }
     }
 
@@ -1556,6 +1590,7 @@ class AppViewModel(
                 toast("Developer options locked")
             }
             UiAction.ClearToast -> _feedback.update { it.copy(toast = null) }
+            is UiAction.CheckUpdate -> checkUpdate(a.manual)
             is UiAction.Simulate -> _dev.update { it.copy(simulate = a.enabled) }
             is UiAction.SimulatePercent -> _dev.update { it.copy(simulatePercent = a.percent) }
             is UiAction.ForceMood -> _dev.update { it.copy(forcedMood = a.mood) }
@@ -1589,6 +1624,22 @@ class AppViewModel(
             }
             UiAction.AddTestFriends -> toast(repository.devAddOneOfEachSpecies())
             UiAction.RemoveTestFriends -> toast(repository.devRemoveTestFriends())
+        }
+    }
+
+    private suspend fun checkUpdate(manual: Boolean) {
+        _update.update { it.copy(busy = true, message = null) }
+        try {
+            val info = withContext(Dispatchers.IO) { UpdateChecker.check() }
+            val available = UpdateChecker.isNewer(info.version, com.sippy.app.BuildConfig.VERSION_NAME)
+            val message = if (available) "Update ${info.version} is available"
+            else "You are up to date (${info.version})"
+            _update.update { UpdateState(false, info, available, message) }
+            if (manual) toast(message)
+        } catch (e: Exception) {
+            val message = "Could not check for updates (${e.message ?: "network error"})"
+            _update.update { UpdateState(false, null, false, message) }
+            if (manual) toast(message)
         }
     }
 
@@ -3055,6 +3106,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -3072,11 +3124,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.sippy.app.BuildConfig
 import com.sippy.app.domain.AmountFormat
 import com.sippy.app.ui.NumberDialog
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.updates.UpdateChecker
 import com.sippy.app.ui.theme.Accents
 import com.sippy.app.ui.theme.LocalFriendColors
 
@@ -3189,6 +3243,21 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
                 Text(Accents.labels[index], style = MaterialTheme.typography.labelSmall)
             }
         }
+
+        SectionTitle("Updates")
+        Text("Installed: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { onAction(UiAction.CheckUpdate(true)) },
+                enabled = !state.update.busy
+            ) { Text(if (state.update.busy) "Checking..." else "Check for updates") }
+            state.update.info?.apkUrl?.takeIf { state.update.available }?.let { url ->
+                Button(onClick = { UpdateChecker.open(context, url) }) { Text("Download update") }
+            }
+        }
+        state.update.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Text("Sippy checks for a new release once per day. Nothing is installed automatically.",
+            style = MaterialTheme.typography.bodySmall)
 
         SectionTitle("About")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
@@ -3339,6 +3408,79 @@ fun SippyTheme(mode: String = "system", accent: String = "aqua", content: @Compo
     }
     androidx.compose.runtime.CompositionLocalProvider(LocalFriendColors provides Accents.colors(accent)) {
         MaterialTheme(colorScheme = Accents.scheme(accent, dark), content = content)
+    }
+}
+```
+
+---
+
+## `app/src/main/java/com/sippy/app/updates/UpdateChecker.kt`
+
+```kotlin
+package com.sippy.app.updates
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+
+data class UpdateInfo(val version: String, val apkUrl: String?, val notes: String)
+
+/**
+ * Checks the repository's latest GitHub release. The app never installs anything by itself:
+ * checking is automatic (once per day), downloading/installing is an explicit user action.
+ */
+object UpdateChecker {
+    private const val LATEST_RELEASE_API = "https://api.github.com/repos/Cooreo/Sippy/releases/latest"
+
+    fun check(): UpdateInfo {
+        val connection = URL(LATEST_RELEASE_API).openConnection() as HttpURLConnection
+        return try {
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10_000
+            connection.readTimeout = 10_000
+            connection.setRequestProperty("Accept", "application/vnd.github+json")
+            connection.setRequestProperty("User-Agent", "Sippy-Update-Checker")
+            val code = connection.responseCode
+            if (code !in 200..299) error("Update check failed (HTTP $code)")
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(body)
+            val version = json.optString("tag_name", "").removePrefix("v").trim()
+            if (version.isBlank()) error("Release has no version tag")
+            var apkUrl: String? = null
+            val assets = json.optJSONArray("assets")
+            if (assets != null) {
+                for (i in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(i)
+                    if (asset.optString("name", "").endsWith(".apk")) {
+                        apkUrl = asset.optString("browser_download_url").ifBlank { null }
+                        break
+                    }
+                }
+            }
+            UpdateInfo(version, apkUrl, json.optString("body", ""))
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    fun isNewer(latest: String, current: String): Boolean {
+        fun parts(v: String) = v.split(".").mapNotNull { it.toIntOrNull() }
+        val a = parts(latest)
+        val b = parts(current)
+        for (i in 0 until maxOf(a.size, b.size)) {
+            val left = a.getOrElse(i) { 0 }
+            val right = b.getOrElse(i) { 0 }
+            if (left != right) return left > right
+        }
+        return false
+    }
+
+    fun open(context: Context, url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
     }
 }
 ```
@@ -3588,7 +3730,7 @@ class LogicTest {
 
     @Test
     fun streakExtendsOnlyFromConsecutiveDays() {
-        assertEquals(Pair(4, 4), StreakLogic.afterDay(true, true, 3, 5))
+        assertEquals(Pair(4, 5), StreakLogic.afterDay(true, true, 3, 5))
         assertEquals(Pair(1, 5), StreakLogic.afterDay(true, false, 3, 5))
         assertEquals(Pair(0, 5), StreakLogic.afterDay(false, true, 3, 5))
     }
@@ -3649,6 +3791,7 @@ class LogicTest {
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -3698,6 +3841,84 @@ class LogicTest {
         </provider>
     </application>
 </manifest>
+```
+
+---
+
+## `.github/workflows/android-ci.yml`
+
+```yaml
+name: Android CI
+
+on:
+  push:
+    branches:
+      - 'arena/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare Android SDK 35
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager --list_installed | head -30
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+      - name: Unit tests and builds
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleDebug bundleRelease 2>&1 | tee build-ci.log
+      - name: Report build failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo 'Build log:'
+            echo '```'
+            tail -c 60000 build-ci.log
+            echo '```'
+          } > issue-body.md
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "CI build failure run $GITHUB_RUN_ID" \
+            --body-file issue-body.md
+      - name: Upload APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sippy-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+      - name: Upload AAB
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sippy-release-aab
+          path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: ignore
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sippy-test-reports
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
 ```
 
 ---
@@ -3813,6 +4034,10 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 ## Icons
 
 The launcher icon is a vector drawable plus an adaptive icon XML in `app/src/main/res`; no binary assets are needed. To generate PNG densities from the vector in Android Studio: right-click `ic_launcher_foreground.xml` → Generate → Image Asset, or use `mipmap` density folders produced by the Asset Studio wizard. For Play, export a 512×512 PNG from the same vector (e.g. Android Studio's Image Asset preview or a vector → PNG converter).
+
+## Updates
+
+Settings has a **Check for updates** button. The app also checks the latest GitHub release once per day using `https://api.github.com/repos/Cooreo/Sippy/releases/latest`. If a newer tag exists, a **Download update** button opens the release APK in the browser. Nothing is downloaded or installed automatically. Built APKs are kept in `releases/`.
 
 ## Developer options
 

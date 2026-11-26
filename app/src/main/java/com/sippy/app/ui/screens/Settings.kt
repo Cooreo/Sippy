@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -35,11 +36,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.sippy.app.BuildConfig
 import com.sippy.app.domain.AmountFormat
 import com.sippy.app.ui.NumberDialog
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.updates.UpdateChecker
 import com.sippy.app.ui.theme.Accents
 import com.sippy.app.ui.theme.LocalFriendColors
 
@@ -152,6 +155,21 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
                 Text(Accents.labels[index], style = MaterialTheme.typography.labelSmall)
             }
         }
+
+        SectionTitle("Updates")
+        Text("Installed: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { onAction(UiAction.CheckUpdate(true)) },
+                enabled = !state.update.busy
+            ) { Text(if (state.update.busy) "Checking..." else "Check for updates") }
+            state.update.info?.apkUrl?.takeIf { state.update.available }?.let { url ->
+                Button(onClick = { UpdateChecker.open(context, url) }) { Text("Download update") }
+            }
+        }
+        state.update.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Text("Sippy checks for a new release once per day. Nothing is installed automatically.",
+            style = MaterialTheme.typography.bodySmall)
 
         SectionTitle("About")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,

@@ -34,7 +34,8 @@ data class Settings(
     val bestStreak: Int = 0,
     val lastCelebratedDay: String = "",
     val lastProcessedDay: String = "",
-    val debugOverlay: Boolean = false
+    val debugOverlay: Boolean = false,
+    val lastUpdateCheckDay: String = ""
 )
 
 private object Keys {
@@ -54,6 +55,7 @@ private object Keys {
     val CELEBRATED = stringPreferencesKey("last_celebrated_day")
     val PROCESSED = stringPreferencesKey("last_processed_day")
     val DEBUG = booleanPreferencesKey("debug_overlay")
+    val UPDATE_CHECK = stringPreferencesKey("last_update_check_day")
 }
 
 class SettingsRepository(private val context: Context) {
@@ -76,7 +78,8 @@ class SettingsRepository(private val context: Context) {
                 bestStreak = p[Keys.BEST] ?: 0,
                 lastCelebratedDay = p[Keys.CELEBRATED] ?: "",
                 lastProcessedDay = p[Keys.PROCESSED] ?: "",
-                debugOverlay = p[Keys.DEBUG] ?: false
+                debugOverlay = p[Keys.DEBUG] ?: false,
+                lastUpdateCheckDay = p[Keys.UPDATE_CHECK] ?: ""
             )
         }
 
@@ -108,6 +111,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setCelebratedDay(day: String) = set(Keys.CELEBRATED, day)
     suspend fun setProcessedDay(day: String) = set(Keys.PROCESSED, day)
     suspend fun setDebugOverlay(enabled: Boolean) = set(Keys.DEBUG, enabled)
+    suspend fun setUpdateCheckDay(day: String) = set(Keys.UPDATE_CHECK, day)
 
     suspend fun clearAll() = context.settingsStore.edit { it.clear() }
 }

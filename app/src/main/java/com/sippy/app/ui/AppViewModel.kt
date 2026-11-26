@@ -17,6 +17,10 @@ import com.sippy.app.domain.MoodCalculator
 import com.sippy.app.domain.Species
 import com.sippy.app.notifications.Notifier
 import com.sippy.app.notifications.ReminderScheduler
+import com.sippy.app.updates.UpdateChecker
+import com.sippy.app.updates.UpdateInfo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +43,13 @@ data class DevState(
     val animationSerial: Long = 0L,
     val fakeTime: Boolean = false,
     val fakeHours: Int = 0
+)
+
+data class UpdateState(
+    val busy: Boolean = false,
+    val info: UpdateInfo? = null,
+    val available: Boolean = false,
+    val message: String? = null
 )
 
 data class Feedback(
@@ -65,7 +76,8 @@ data class UiState(
     val pace: Float = 0f,
     val mood: Mood = Mood.CONTENT,
     val dev: DevState = DevState(),
-    val feedback: Feedback = Feedback()
+    val feedback: Feedback = Feedback(),
+    val update: UpdateState = UpdateState()
 )
 
 sealed interface UiAction {
@@ -89,6 +101,7 @@ sealed interface UiAction {
     data object UnlockDev : UiAction
     data object LockDev : UiAction
     data object ClearToast : UiAction
+    data class CheckUpdate(val manual: Boolean) : UiAction
     data class Simulate(val enabled: Boolean) : UiAction
     data class SimulatePercent(val percent: Float) : UiAction
     data class ForceMood(val mood: Mood?) : UiAction
@@ -118,6 +131,7 @@ class AppViewModel(
 
     private val _dev = MutableStateFlow(DevState())
     private val _feedback = MutableStateFlow(Feedback())
+    private val _update = MutableStateFlow(UpdateState())
 
     private val dayFlow: Flow<String> = clock.tick
         .map { DayKeys.key(it, clock.zone()) }
@@ -137,8 +151,15 @@ class AppViewModel(
         Five(c.first, c.second, c.third, history, dev)
     }
 
-    val state = combine(loaded, clock.tick, _feedback) { l, now, feedback -> assemble(l, now, feedback) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), UiState())
+    private val withClock = combine(loaded, clock.tick) { l, now -> l to now }
+
+    private val withFeedback = combine(withClock, _feedback) { pair, feedback ->
+        Triple(pair.first, pair.second, feedback)
+    }
+
+    val state = combine(withFeedback, _update) { triple, update ->
+        assemble(triple.first, triple.second, triple.third, update)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), UiState())
 
     private data class Five(
         val settings: Settings,
@@ -148,7 +169,7 @@ class AppViewModel(
         val dev: DevState
     )
 
-    private fun assemble(l: Five, now: Long, feedback: Feedback): UiState {
+    private fun assemble(l: Five, now: Long, feedback: Feedback, update: UpdateState): UiState {
         val cfg = l.settings
         val active = l.friends.firstOrNull { it.id == cfg.activeFriendId } ?: l.friends.firstOrNull()
         val effective = if (l.dev.simulate)
@@ -171,7 +192,8 @@ class AppViewModel(
                 effective, cfg.goalMl, now, clock.zone(), cfg.wakeStartHour, cfg.wakeEndHour
             ),
             dev = l.dev,
-            feedback = feedback
+            feedback = feedback,
+            update = update
         )
     }
 
@@ -195,6 +217,14 @@ class AppViewModel(
         }
         viewModelScope.launch {
             clock.tick.collect { repository.ensureDayRollover() }
+        }
+        viewModelScope.launch {
+            val cfg = settings.snapshot()
+            val day = DayKeys.key(clock.now(), clock.zone())
+            if (cfg.lastUpdateCheckDay != day) {
+                settings.setUpdateCheckDay(day)
+                checkUpdate(manual = false)
+            }
         }
     }
 
@@ -243,6 +273,7 @@ class AppViewModel(
                 toast("Developer options locked")
             }
             UiAction.ClearToast -> _feedback.update { it.copy(toast = null) }
+            is UiAction.CheckUpdate -> checkUpdate(a.manual)
             is UiAction.Simulate -> _dev.update { it.copy(simulate = a.enabled) }
             is UiAction.SimulatePercent -> _dev.update { it.copy(simulatePercent = a.percent) }
             is UiAction.ForceMood -> _dev.update { it.copy(forcedMood = a.mood) }
@@ -276,6 +307,22 @@ class AppViewModel(
             }
             UiAction.AddTestFriends -> toast(repository.devAddOneOfEachSpecies())
             UiAction.RemoveTestFriends -> toast(repository.devRemoveTestFriends())
+        }
+    }
+
+    private suspend fun checkUpdate(manual: Boolean) {
+        _update.update { it.copy(busy = true, message = null) }
+        try {
+            val info = withContext(Dispatchers.IO) { UpdateChecker.check() }
+            val available = UpdateChecker.isNewer(info.version, com.sippy.app.BuildConfig.VERSION_NAME)
+            val message = if (available) "Update ${info.version} is available"
+            else "You are up to date (${info.version})"
+            _update.update { UpdateState(false, info, available, message) }
+            if (manual) toast(message)
+        } catch (e: Exception) {
+            val message = "Could not check for updates (${e.message ?: "network error"})"
+            _update.update { UpdateState(false, null, false, message) }
+            if (manual) toast(message)
         }
     }
 
