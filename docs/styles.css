@@ -84,3 +84,6 @@ footer{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;paddin
 @keyframes rise{from{transform:translateY(20px);opacity:0}to{transform:translateY(-30px);opacity:0}40%{opacity:.8}}
 @media(max-width:860px){.hero{grid-template-columns:1fr;padding-top:10vh}.phone{margin-top:40px}h1{letter-spacing:-4px}.float-chip{display:none}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.intro{display:none}#particles{display:none}}
+
+.app-icon{width:96px;height:96px;display:block;margin-bottom:12px;filter:drop-shadow(6px 8px 0 rgba(11,43,18,.2));animation:bob 3.2s ease-in-out infinite}
+.small-icon{width:74px;height:74px;margin-bottom:18px}

@@ -69,10 +69,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view 1.1.0 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create 1.1.0 releases/sippy-debug.apk --repo "$GITHUB_REPOSITORY" \
+          if ! gh release view 1.1.1 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create 1.1.1 releases/sippy-debug.apk --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_REF_NAME" \
-              --title "Sippy 1.1.0" \
+              --title "Sippy 1.1.1" \
               --notes "CI-built debug APK for Android 8.0+ (API 26). Settings -> Check for updates reads this release."
           fi
       - name: Upload APK
