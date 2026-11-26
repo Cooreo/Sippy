@@ -4,10 +4,13 @@ on:
   push:
     branches:
       - 'arena/**'
+    paths-ignore:
+      - 'releases/**'
+      - 'ALL_FILES.md'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
@@ -48,6 +51,19 @@ jobs:
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "CI build failure run $GITHUB_RUN_ID" \
             --body-file issue-body.md
+      - name: Publish APK to releases folder
+        if: success()
+        run: |
+          mkdir -p releases
+          cp app/build/outputs/apk/debug/app-debug.apk releases/sippy-debug.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$GITHUB_REF_NAME"
+          git add -f releases/sippy-debug.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: publish debug APK to releases/"
+            git push origin HEAD:"$GITHUB_REF_NAME"
+          fi
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
