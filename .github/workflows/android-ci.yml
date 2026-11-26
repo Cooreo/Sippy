@@ -64,6 +64,17 @@ jobs:
             git commit -m "ci: publish debug APK to releases/"
             git push origin HEAD:"$GITHUB_REF_NAME"
           fi
+      - name: Publish GitHub release with APK
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view 1.0.0 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create 1.0.0 releases/sippy-debug.apk --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_REF_NAME" \
+              --title "Sippy 1.0.0" \
+              --notes "CI-built debug APK for Android 8.0+ (API 26). Settings -> Check for updates reads this release."
+          fi
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
