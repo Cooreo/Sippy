@@ -1,6 +1,6 @@
 # Sippy — complete source listing
 
-Every text file in this repository, in full, with its path as a heading. Binary files (the Gradle wrapper JAR and the PNG launcher/site icon) are stored in the repository but cannot be printed as text; regenerate the wrapper with `gradle wrapper --gradle-version 8.9`.
+Every text file in this repository, in full, with its path as a heading. Binary files (the Gradle wrapper JAR and PNG icons) are stored in the repository but cannot be printed as text.
 
 ---
 
@@ -4140,6 +4140,7 @@ on:
     paths-ignore:
       - 'releases/**'
       - 'ALL_FILES.md'
+      - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -4256,9 +4257,6 @@ concurrency:
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
