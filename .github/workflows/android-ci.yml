@@ -39,13 +39,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          {
+            echo 'Build log:'
+            echo '```'
+            tail -c 60000 build-ci.log
+            echo '```'
+          } > issue-body.md
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "CI build failure run $GITHUB_RUN_ID" \
-            --body "Build log:
-
-\`\`\`
-$(tail -c 60000 build-ci.log)
-\`\`\`"
+            --body-file issue-body.md
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
