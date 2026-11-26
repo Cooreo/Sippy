@@ -123,8 +123,8 @@ android {
         applicationId = "com.sippy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
@@ -312,6 +312,102 @@ class SippyApp : Application() {
 
 ---
 
+## `app/src/main/java/com/sippy/app/ai/SmartCoach.kt`
+
+```kotlin
+package com.sippy.app.ai
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import javax.net.ssl.HttpsURLConnection
+
+data class CoachContext(
+    val friendName: String,
+    val totalMl: Int,
+    val goalMl: Int,
+    val streak: Int,
+    val mood: String,
+    val average7DaysMl: Int
+)
+
+data class CoachState(
+    val busy: Boolean = false,
+    val answer: String? = null,
+    val error: String? = null
+)
+
+/** Local-first coaching: deterministic insights need no network. AI answers are opt-in. */
+object SmartCoach {
+    private const val ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+    private const val MODEL = "openai/gpt-4o-mini"
+
+    fun localInsights(c: CoachContext): List<String> {
+        val remaining = (c.goalMl - c.totalMl).coerceAtLeast(0)
+        val result = mutableListOf<String>()
+        when {
+            remaining == 0 -> result.add("${c.friendName} is dancing — target reached. Protect the streak with a small evening sip.")
+            c.totalMl == 0 -> result.add("No water yet today. A 250 ml sip is the easiest way to wake ${c.friendName} up.")
+            else -> result.add("$remaining ml to go. Two 250 ml glasses would almost finish the day.")
+        }
+        if (c.average7DaysMl > 0) {
+            val delta = c.totalMl - c.average7DaysMl
+            result.add(if (delta >= 0) "You are $delta ml ahead of your 7-day average at this point." else
+                "You are ${-delta} ml behind your 7-day average — same day, last week.")
+        }
+        if (c.streak > 0) result.add("Streak: $c.streak day(s). Consistency matters more than a huge single day.")
+        result.add("Current mood: ${c.mood}. ${c.friendName} reacts to every entry you log.")
+        return result
+    }
+
+    suspend fun ask(apiKey: String, question: String, context: CoachContext): String =
+        withContext(Dispatchers.IO) {
+            if (apiKey.isBlank()) error("Add your OpenRouter API key in Settings first")
+            val system = """
+                You are the hydration coach inside Sippy, a friendly water-tracking app.
+                Be brief, warm and practical. Never diagnose medical conditions.
+                Local app state: friend=${context.friendName}, today=${context.totalMl}ml of ${context.goalMl}ml,
+                streak=${context.streak} days, mood=${context.mood}, 7-day average=${context.average7DaysMl}ml.
+            """.trimIndent()
+            val payload = JSONObject()
+                .put("model", MODEL)
+                .put("max_tokens", 180)
+                .put("messages", JSONArray()
+                    .put(JSONObject().put("role", "system").put("content", system))
+                    .put(JSONObject().put("role", "user").put("content", question)))
+
+            val connection = URL(ENDPOINT).openConnection() as HttpsURLConnection
+            try {
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 30_000
+                connection.doOutput = true
+                connection.setRequestProperty("Authorization", "Bearer $apiKey")
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.setRequestProperty("HTTP-Referer", "https://cooreo.github.io/Sippy/")
+                connection.setRequestProperty("X-Title", "Sippy")
+                connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val response = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                if (code !in 200..299) error("OpenRouter HTTP $code: ${response.take(160)}")
+                val choices = JSONObject(response).getJSONArray("choices")
+                if (choices.length() == 0) error("OpenRouter returned no choices")
+                choices.getJSONObject(0).getJSONObject("message").optString("content").ifBlank {
+                    error("OpenRouter returned an empty reply")
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+}
+```
+
+---
+
 ## `app/src/main/java/com/sippy/app/data/Entities.kt`
 
 ```kotlin
@@ -468,7 +564,8 @@ data class Settings(
     val lastCelebratedDay: String = "",
     val lastProcessedDay: String = "",
     val debugOverlay: Boolean = false,
-    val lastUpdateCheckDay: String = ""
+    val lastUpdateCheckDay: String = "",
+    val openRouterKey: String = ""
 )
 
 private object Keys {
@@ -489,6 +586,7 @@ private object Keys {
     val PROCESSED = stringPreferencesKey("last_processed_day")
     val DEBUG = booleanPreferencesKey("debug_overlay")
     val UPDATE_CHECK = stringPreferencesKey("last_update_check_day")
+    val OPENROUTER_KEY = stringPreferencesKey("openrouter_api_key")
 }
 
 class SettingsRepository(private val context: Context) {
@@ -512,7 +610,8 @@ class SettingsRepository(private val context: Context) {
                 lastCelebratedDay = p[Keys.CELEBRATED] ?: "",
                 lastProcessedDay = p[Keys.PROCESSED] ?: "",
                 debugOverlay = p[Keys.DEBUG] ?: false,
-                lastUpdateCheckDay = p[Keys.UPDATE_CHECK] ?: ""
+                lastUpdateCheckDay = p[Keys.UPDATE_CHECK] ?: "",
+                openRouterKey = p[Keys.OPENROUTER_KEY] ?: ""
             )
         }
 
@@ -545,6 +644,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setProcessedDay(day: String) = set(Keys.PROCESSED, day)
     suspend fun setDebugOverlay(enabled: Boolean) = set(Keys.DEBUG, enabled)
     suspend fun setUpdateCheckDay(day: String) = set(Keys.UPDATE_CHECK, day)
+    suspend fun setOpenRouterKey(key: String) = set(Keys.OPENROUTER_KEY, key.trim())
 
     suspend fun clearAll() = context.settingsStore.edit { it.clear() }
 }
@@ -1202,7 +1302,7 @@ class ReminderScheduler(
     private val settings: SettingsRepository,
     private val notifier: Notifier
 ) {
-    private val workManager = WorkManager.getInstance(context)
+    private val workManager by lazy { WorkManager.getInstance(context) }
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
     suspend fun refresh(exactAllowed: Boolean) {
@@ -1319,6 +1419,9 @@ package com.sippy.app.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.sippy.app.ai.CoachContext
+import com.sippy.app.ai.CoachState
+import com.sippy.app.ai.SmartCoach
 import com.sippy.app.data.AppEvent
 import com.sippy.app.data.DayStatsEntity
 import com.sippy.app.data.DrinkEntity
@@ -1344,6 +1447,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -1394,7 +1498,9 @@ data class UiState(
     val mood: Mood = Mood.CONTENT,
     val dev: DevState = DevState(),
     val feedback: Feedback = Feedback(),
-    val update: UpdateState = UpdateState()
+    val update: UpdateState = UpdateState(),
+    val coach: CoachState = CoachState(),
+    val apiKey: String = ""
 )
 
 sealed interface UiAction {
@@ -1419,6 +1525,8 @@ sealed interface UiAction {
     data object LockDev : UiAction
     data object ClearToast : UiAction
     data class CheckUpdate(val manual: Boolean) : UiAction
+    data class SaveApiKey(val key: String) : UiAction
+    data class AskCoach(val question: String) : UiAction
     data class Simulate(val enabled: Boolean) : UiAction
     data class SimulatePercent(val percent: Float) : UiAction
     data class ForceMood(val mood: Mood?) : UiAction
@@ -1449,6 +1557,7 @@ class AppViewModel(
     private val _dev = MutableStateFlow(DevState())
     private val _feedback = MutableStateFlow(Feedback())
     private val _update = MutableStateFlow(UpdateState())
+    private val _coach = MutableStateFlow(CoachState())
 
     private val dayFlow: Flow<String> = clock.tick
         .map { DayKeys.key(it, clock.zone()) }
@@ -1474,8 +1583,19 @@ class AppViewModel(
         Triple(pair.first, pair.second, feedback)
     }
 
-    val state = combine(withFeedback, _update) { triple, update ->
-        assemble(triple.first, triple.second, triple.third, update)
+    private data class LoadedState(
+        val five: Five, val now: Long, val feedback: Feedback, val update: UpdateState
+    )
+
+    private val withUpdate = combine(withFeedback, _update) { triple, update ->
+        LoadedState(triple.first, triple.second, triple.third, update)
+    }
+
+    val state = combine(withUpdate, _coach) { loaded, coach ->
+        assemble(
+            loaded.five, loaded.now, loaded.feedback, loaded.update, coach,
+            loaded.five.settings.openRouterKey
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), UiState())
 
     private data class Five(
@@ -1486,7 +1606,10 @@ class AppViewModel(
         val dev: DevState
     )
 
-    private fun assemble(l: Five, now: Long, feedback: Feedback, update: UpdateState): UiState {
+    private fun assemble(
+        l: Five, now: Long, feedback: Feedback, update: UpdateState,
+        coach: CoachState, apiKey: String
+    ): UiState {
         val cfg = l.settings
         val active = l.friends.firstOrNull { it.id == cfg.activeFriendId } ?: l.friends.firstOrNull()
         val effective = if (l.dev.simulate)
@@ -1503,14 +1626,15 @@ class AppViewModel(
             history = l.history,
             now = now,
             progress = MoodCalculator.progress(effective, cfg.goalMl),
-            pace = MoodCalculator.pace(now, clock.zone(),
-                cfg.wakeStartHour, cfg.wakeEndHour),
+            pace = MoodCalculator.pace(now, clock.zone(), cfg.wakeStartHour, cfg.wakeEndHour),
             mood = l.dev.forcedMood ?: MoodCalculator.mood(
                 effective, cfg.goalMl, now, clock.zone(), cfg.wakeStartHour, cfg.wakeEndHour
             ),
             dev = l.dev,
             feedback = feedback,
-            update = update
+            update = update,
+            coach = coach,
+            apiKey = apiKey
         )
     }
 
@@ -1591,6 +1715,11 @@ class AppViewModel(
             }
             UiAction.ClearToast -> _feedback.update { it.copy(toast = null) }
             is UiAction.CheckUpdate -> checkUpdate(a.manual)
+            is UiAction.SaveApiKey -> {
+                settings.setOpenRouterKey(a.key)
+                toast("API key saved on this device")
+            }
+            is UiAction.AskCoach -> askCoach(a.question)
             is UiAction.Simulate -> _dev.update { it.copy(simulate = a.enabled) }
             is UiAction.SimulatePercent -> _dev.update { it.copy(simulatePercent = a.percent) }
             is UiAction.ForceMood -> _dev.update { it.copy(forcedMood = a.mood) }
@@ -1624,6 +1753,27 @@ class AppViewModel(
             }
             UiAction.AddTestFriends -> toast(repository.devAddOneOfEachSpecies())
             UiAction.RemoveTestFriends -> toast(repository.devRemoveTestFriends())
+        }
+    }
+
+    private suspend fun askCoach(question: String) {
+        _coach.update { it.copy(busy = true, error = null) }
+        try {
+            val cfg = settings.snapshot()
+            val recent = repository.history(7).first()
+            val average = if (recent.isEmpty()) 0 else recent.sumOf { it.totalMl } / recent.size
+            val context = CoachContext(
+                friendName = repository.activeFriendName(),
+                totalMl = state.value.totalMl,
+                goalMl = cfg.goalMl,
+                streak = cfg.currentStreak,
+                mood = state.value.mood.label,
+                average7DaysMl = average
+            )
+            val answer = SmartCoach.ask(cfg.openRouterKey, question, context)
+            _coach.update { CoachState(false, answer, null) }
+        } catch (e: Exception) {
+            _coach.update { CoachState(false, null, e.message ?: "Could not reach OpenRouter") }
         }
     }
 
@@ -2185,6 +2335,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.sippy.app.R
 import com.sippy.app.ui.screens.AboutScreen
+import com.sippy.app.ui.screens.CoachScreen
 import com.sippy.app.ui.screens.DevOptionsScreen
 import com.sippy.app.ui.screens.FriendsScreen
 import com.sippy.app.ui.screens.HistoryScreen
@@ -2199,6 +2350,7 @@ private val tabs = listOf(
     Tab("home", "Home", R.drawable.ic_home),
     Tab("friends", "Friends", R.drawable.ic_friends),
     Tab("history", "History", R.drawable.ic_history),
+    Tab("coach", "Coach", R.drawable.ic_coach),
     Tab("settings", "Settings", R.drawable.ic_settings)
 )
 
@@ -2260,12 +2412,114 @@ fun SippyNavigation(viewModel: AppViewModel) {
                     composable("home") { HomeScreen(state, viewModel::act) }
                     composable("friends") { FriendsScreen(state, viewModel::act) }
                     composable("history") { HistoryScreen(state, viewModel::act) }
+                    composable("coach") { CoachScreen(state, viewModel::act) { nav.navigate("settings") } }
                     composable("settings") { SettingsScreen(state, viewModel::act, nav::navigate) }
                     composable("about") { AboutScreen(viewModel::act) { nav.popBackStack() } }
                     composable("dev") { DevOptionsScreen(state, viewModel::act) { nav.popBackStack() } }
                 }
             }
         }
+    }
+}
+```
+
+---
+
+## `app/src/main/java/com/sippy/app/ui/screens/Coach.kt`
+
+```kotlin
+package com.sippy.app.ui.screens
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.sippy.app.ai.CoachContext
+import com.sippy.app.ai.SmartCoach
+import com.sippy.app.ui.SectionTitle
+import com.sippy.app.ui.UiAction
+import com.sippy.app.ui.UiState
+
+@Composable
+fun CoachScreen(state: UiState, onAction: (UiAction) -> Unit, onOpenSettings: () -> Unit) {
+    val cfg = state.settings ?: return
+    var question by remember { mutableStateOf("") }
+    val recent = state.history.take(7)
+    val average = if (recent.isEmpty()) 0 else recent.sumOf { it.totalMl } / recent.size
+    val context = CoachContext(
+        friendName = state.activeFriend?.name ?: "your friend",
+        totalMl = state.totalMl,
+        goalMl = cfg.goalMl,
+        streak = cfg.currentStreak,
+        mood = state.mood.label,
+        average7DaysMl = average
+    )
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Text("Smart Coach", style = MaterialTheme.typography.headlineSmall)
+        Text("Local insights work offline. AI answers use your OpenRouter key only when you ask.")
+        Spacer(Modifier.height(12.dp))
+        SectionTitle("What the app notices (on device)")
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                SmartCoach.localInsights(context).forEach { insight ->
+                    Text("• $insight", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        SectionTitle("Ask the coach")
+        if (state.apiKey.isBlank()) {
+            Text("Add an OpenRouter API key in Settings to enable AI answers.")
+            TextButton(onClick = onOpenSettings) { Text("Open Settings") }
+        }
+        OutlinedTextField(
+            value = question,
+            onValueChange = { question = it.take(300) },
+            label = { Text("Your question") },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3,
+            enabled = state.apiKey.isNotBlank()
+        )
+        Spacer(Modifier.height(8.dp))
+        Row {
+            Button(
+                onClick = { onAction(UiAction.AskCoach(question)); question = "" },
+                enabled = state.apiKey.isNotBlank() && question.isNotBlank() && !state.coach.busy
+            ) { Text(if (state.coach.busy) "Thinking..." else "Ask") }
+        }
+        state.coach.answer?.let { answer ->
+            Spacer(Modifier.height(12.dp))
+            Card(Modifier.fillMaxWidth()) {
+                Text(answer, modifier = Modifier.padding(16.dp))
+            }
+        }
+        state.coach.error?.let { error ->
+            Spacer(Modifier.height(8.dp))
+            Text(error, color = MaterialTheme.colorScheme.error)
+        }
+        Spacer(Modifier.height(80.dp))
     }
 }
 ```
@@ -3122,6 +3376,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.sippy.app.BuildConfig
@@ -3143,6 +3398,7 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
     var intervalDialog by remember { mutableStateOf(false) }
     var wakeStartDialog by remember { mutableStateOf(false) }
     var wakeEndDialog by remember { mutableStateOf(false) }
+    var apiKeyText by remember(cfg.openRouterKey) { mutableStateOf(cfg.openRouterKey) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -3243,6 +3499,22 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
                 Text(Accents.labels[index], style = MaterialTheme.typography.labelSmall)
             }
         }
+
+        SectionTitle("Smart features (OpenRouter)")
+        OutlinedTextField(
+            value = apiKeyText,
+            onValueChange = { apiKeyText = it.trim() },
+            label = { Text("OpenRouter API key") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onAction(UiAction.SaveApiKey(apiKeyText)) }) { Text("Save key") }
+            TextButton(onClick = { onNavigate("coach") }) { Text("Open Coach") }
+        }
+        Text("Stored only on this device. Sent to OpenRouter only when you ask the coach a question.",
+            style = MaterialTheme.typography.bodySmall)
 
         SectionTitle("Updates")
         Text("Installed: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
@@ -3483,6 +3755,18 @@ object UpdateChecker {
         context.startActivity(intent)
     }
 }
+```
+
+---
+
+## `app/src/main/res/drawable/ic_coach.xml`
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M12,2 l1.8,6.2 L20,10 l-6.2,1.8 L12,18 l-1.8,-6.2 L4,10 l6.2,-1.8 Z M19,16 l0.9,2.1 L22,19 l-2.1,0.9 L19,22 l-0.9,-2.1 L16,19 l2.1,-0.9 Z"/>
+</vector>
 ```
 
 ---
@@ -3854,10 +4138,13 @@ on:
   push:
     branches:
       - 'arena/**'
+    paths-ignore:
+      - 'releases/**'
+      - 'ALL_FILES.md'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
@@ -3898,6 +4185,30 @@ jobs:
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "CI build failure run $GITHUB_RUN_ID" \
             --body-file issue-body.md
+      - name: Publish APK to releases folder
+        if: success()
+        run: |
+          mkdir -p releases
+          cp app/build/outputs/apk/debug/app-debug.apk releases/sippy-debug.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$GITHUB_REF_NAME"
+          git add -f releases/sippy-debug.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: publish debug APK to releases/"
+            git push origin HEAD:"$GITHUB_REF_NAME"
+          fi
+      - name: Publish GitHub release with APK
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view 1.1.0 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create 1.1.0 releases/sippy-debug.apk --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_REF_NAME" \
+              --title "Sippy 1.1.0" \
+              --notes "CI-built debug APK for Android 8.0+ (API 26). Settings -> Check for updates reads this release."
+          fi
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
@@ -3978,6 +4289,8 @@ jobs:
 ```markdown
 # Sippy
 
+**Distribution:** this project ships as a sideloaded Android APK from a GitHub Pages site (`docs/`) and GitHub Releases. The Play Store guide in `docs/RELEASE_GUIDE.md` is kept for reference only.
+
 An offline-first water tracking app with animated water friends, built with Kotlin, Jetpack Compose (Material 3), Room, Preferences DataStore, WorkManager and manual dependency injection.
 
 ## Project structure
@@ -4016,6 +4329,10 @@ Sippy/
         │           └── screens/{Onboarding.kt,Home.kt,Friends.kt,History.kt,Settings.kt,DevOptions.kt}
         └── test/java/com/sippy/app/domain/LogicTest.kt
 ```
+
+## Website
+
+`docs/` is the GitHub Pages source (enable Pages → Deploy from a branch → current branch → `/docs`). It has a animated intro, floating particles and a download button pointing at the release APK.
 
 ## Build and run
 
@@ -4070,6 +4387,8 @@ Sippy is an offline-first water tracking app. We do not operate servers for the 
 **Your choices.** You can delete individual entries in History, delete friends in Friends, or use Settings → Developer options → Clear all data to erase everything stored by the app. Uninstalling the app also removes its data.
 
 **Children.** The app is not directed at children under 13 and we do not knowingly collect data from them.
+
+**Optional AI coach.** If you add your own OpenRouter API key in Settings, the app stores that key on your device. When you explicitly ask the coach a question, the app sends your question plus basic local hydration statistics (friend name, today's intake, goal, streak, mood and 7-day average) directly to OpenRouter to generate a reply. Without a key, no AI request is made. Local insights never leave the device.
 
 **Contact.** For privacy questions, contact the developer through the Google Play Store listing's developer contact email.
 
@@ -4138,6 +4457,247 @@ Install the release APK variant locally (`./gradlew assembleRelease`) and smoke-
    Common rejections: misleading screenshots or descriptions, undeclared permissions/SDKs, broken notification permission flow, crashes on older Android, missing privacy policy, child-directed design without a Families declaration, and a private or unreachable privacy policy URL.
 
 8. **Optional GitHub Actions.** `.github/workflows/release.yml` decodes a base64 keystore from repository secrets (`SIPPY_KEYSTORE_BASE64`, `SIPPY_KEYSTORE_PASSWORD`, `SIPPY_KEY_ALIAS`, `SIPPY_KEY_PASSWORD`), runs unit tests, builds `bundleRelease` and uploads the AAB as an artifact on tag `v*` or manual dispatch. Create those secrets in Settings → Secrets and variables → Actions.
+```
+
+---
+
+## `docs/index.html`
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sippy — little friends, big sips</title>
+<meta name="description" content="A local-first water tracker with animated water friends. Download the Android APK.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="intro" id="intro" aria-hidden="true">
+  <div class="intro-line">MEET YOUR</div>
+  <div class="intro-line">WATER</div>
+  <div class="intro-line">FRIENDS</div>
+  <div class="intro-bar"></div>
+</div>
+
+<canvas id="particles" aria-hidden="true"></canvas>
+
+<header class="topbar">
+  <a class="brand" href="#top">SIPPY<span>®</span></a>
+  <nav>
+    <a href="#why">Why</a><a href="#friends">Friends</a><a href="#download">Download</a>
+    <a class="pill" href="#download">GET THE APK ↓</a>
+  </nav>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow">LOCAL-FIRST · ANDROID 8+ · NO ACCOUNT</p>
+    <h1><span class="line">DRINK</span><span class="line">WATER.</span><span class="line outline">MAKE</span><span class="line">A FRIEND.</span></h1>
+    <p class="lede">Sippy turns hydration into a tiny daily ritual. Four animated friends, real streaks, zero cloud. Now with an optional on-device AI coach.</p>
+    <div class="cta-row">
+      <a class="big-button" href="#download">DOWNLOAD APK <span>↓</span></a>
+      <a class="text-button" href="#friends">Meet the friends →</a>
+    </div>
+  </div>
+  <div class="phone-wrap" aria-label="Illustration of the Sippy app home screen">
+    <div class="phone">
+      <div class="phone-top"><span>9:41</span><span>●●●</span></div>
+      <div class="friend" id="friendArt">
+        <div class="blob"></div><div class="eye left"></div><div class="eye right"></div><div class="smile"></div>
+        <div class="bubble b1"></div><div class="bubble b2"></div><div class="bubble b3"></div>
+      </div>
+      <div class="name">BLOBBY <small>Grown · Happy</small></div>
+      <div class="ring"><div class="ring-inner"><strong id="ringValue">1,750</strong><small>ml of 2,000</small></div></div>
+      <div class="buttons"><span>+150</span><span>+250</span><span>+500</span></div>
+    </div>
+    <div class="float-chip chip-a">STAY HYDRATED</div>
+    <div class="float-chip chip-b">NO TRACKING</div>
+  </div>
+</section>
+
+<div class="marquee"><div class="marquee-track">ONE MORE SIP · ONE MORE SIP · ONE MORE SIP · ONE MORE SIP · ONE MORE SIP ·&nbsp;</div></div>
+
+<section class="dark" id="why">
+  <div class="section-head"><span>01 / WHY</span><h2>Built for the everyday.</h2></div>
+  <div class="cards">
+    <article><h3>Friends that feel alive</h3><p>Blink, bob, giggle and dance. Droplet, Sprout, Kitty and Blobby each have their own moves.</p></article>
+    <article><h3>On-device by default</h3><p>Your logs, streaks and friends live in local storage. No account, no ads, no analytics.</p></article>
+    <article><h3>Smart, on your terms</h3><p>Local insights always work. Add your own OpenRouter key only if you want AI coaching.</p></article>
+    <article><h3>Grows with you</h3><p>Earn growth points for every sip and evolve from Baby to Elder.</p></article>
+  </div>
+</section>
+
+<section class="friends" id="friends">
+  <div class="section-head"><span>02 / THE CREW</span><h2>Meet the water friends.</h2></div>
+  <div class="crew">
+    <div class="crew-card"><div class="crew-art droplet"></div><h3>Droplet</h3><p>The original sip buddy.</p></div>
+    <div class="crew-card"><div class="crew-art sprout"></div><h3>Sprout</h3><p>Grows leaves, then flowers.</p></div>
+    <div class="crew-card"><div class="crew-art kitty"></div><h3>Kitty</h3><p>Bows, tail swishes, big hops.</p></div>
+    <div class="crew-card"><div class="crew-art blobby"></div><h3>Blobby</h3><p>Wobbles with pure joy.</p></div>
+  </div>
+</section>
+
+<section class="download" id="download">
+  <div class="section-head light"><span>03 / GET IT</span><h2>Take Sippy with you.</h2></div>
+  <p>Android 8.0 (API 26) or newer. Download the APK, allow installation from your browser, and open it. Your data stays on your device.</p>
+  <a class="big-button dark-button" href="https://github.com/Cooreo/Sippy/releases/download/1.1.0/sippy-debug.apk">DOWNLOAD SIPPY 1.1.0 APK <span>↓</span></a>
+  <p class="small">Prefer to build it yourself? <a href="https://github.com/Cooreo/Sippy">Source on GitHub</a>. <a href="PRIVACY_POLICY.md">Privacy policy</a>.</p>
+</section>
+</main>
+
+<footer><span>SIPPY · MADE FOR THE EVERYDAY SIP</span><span>NO CLOUD. NO ADS. JUST WATER.</span></footer>
+<script src="script.js"></script>
+</body>
+</html>
+```
+
+---
+
+## `docs/script.js`
+
+```javascript
+(function () {
+  const intro = document.getElementById('intro');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduce) setTimeout(() => intro.classList.add('hidden'), 1550);
+
+  const canvas = document.getElementById('particles');
+  if (reduce || !canvas) return;
+  const ctx = canvas.getContext('2d');
+  const drops = [];
+  function resize() {
+    canvas.width = window.innerWidth * devicePixelRatio;
+    canvas.height = window.innerHeight * devicePixelRatio;
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+  for (let i = 0; i < 26; i++) {
+    drops.push({ x: Math.random() * innerWidth, y: Math.random() * innerHeight,
+      r: 3 + Math.random() * 9, speed: .2 + Math.random() * .7, hue: Math.random() > .5 ? '199,90%,60%' : '75,100%,60%' });
+  }
+  function frame() {
+    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    for (const d of drops) {
+      d.y -= d.speed;
+      if (d.y < -20) { d.y = innerHeight + 20; d.x = Math.random() * innerWidth; }
+      ctx.beginPath();
+      ctx.fillStyle = 'hsla(' + d.hue + ',.28)';
+      ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    requestAnimationFrame(frame);
+  }
+  frame();
+
+  const ring = document.getElementById('ringValue');
+  if (ring) {
+    let value = 0;
+    const target = 1750;
+    const tick = () => {
+      value = Math.min(target, value + 45);
+      ring.textContent = value.toLocaleString();
+      if (value < target) requestAnimationFrame(tick);
+    };
+    setTimeout(tick, 1800);
+  }
+})();
+```
+
+---
+
+## `docs/styles.css`
+
+```css
+:root{--lime:#c8ff2e;--ink:#0b2b12;--purple:#1b0b2e;--violet:#7b2ff7;--cream:#fffdf3}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--cream);color:var(--ink);overflow-x:hidden}
+a{color:inherit}
+.topbar{position:sticky;top:0;z-index:20;display:flex;justify-content:space-between;align-items:center;padding:14px 4vw;background:rgba(200,255,46,.9);backdrop-filter:blur(8px);border-bottom:2px solid var(--ink)}
+.brand{font-weight:900;font-size:24px;letter-spacing:-1px;text-decoration:none}
+.brand span{font-size:9px;vertical-align:top}
+nav{display:flex;gap:22px;align-items:center;font-weight:800;font-size:13px;text-transform:uppercase}
+nav a{text-decoration:none}
+nav .pill{background:var(--ink);color:var(--lime);padding:10px 16px;border-radius:999px}
+.intro{position:fixed;inset:0;z-index:100;background:var(--purple);color:#fff;display:flex;flex-direction:column;justify-content:center;align-items:center;transition:transform .8s cubic-bezier(.7,0,.2,1);font-weight:900;font-size:clamp(40px,10vw,120px);line-height:.85;text-align:center;letter-spacing:-5px}
+.intro.hidden{transform:translateY(-100%)}
+.intro-line{opacity:0;transform:translateY(40px) rotate(-3deg);animation:introIn .5s forwards}
+.intro-line:nth-child(1){animation-delay:.15s;color:#c8ff2e}
+.intro-line:nth-child(2){animation-delay:.35s}
+.intro-line:nth-child(3){animation-delay:.55s;color:#c8ff2e}
+.intro-bar{height:8px;width:0;background:#c8ff2e;margin-top:36px;animation:bar 1.1s .2s forwards}
+@keyframes introIn{to{opacity:1;transform:translateY(0) rotate(-3deg)}}
+@keyframes bar{to{width:min(420px,70vw)}}
+#particles{position:fixed;inset:0;z-index:1;pointer-events:none}
+.hero{position:relative;z-index:2;display:grid;grid-template-columns:1.1fr .9fr;gap:4vw;min-height:92vh;align-items:center;padding:6vh 4vw 10vh;background:radial-gradient(circle at 80% 20%,#e8ff9e,transparent 45%),var(--lime)}
+.eyebrow{font-weight:900;letter-spacing:2px;font-size:12px}
+h1{font-size:clamp(56px,9vw,150px);line-height:.82;letter-spacing:-8px;margin:0 0 24px;text-transform:uppercase;font-weight:900}
+h1 .line{display:block;animation:floatY 4s ease-in-out infinite}
+h1 .line:nth-child(2){animation-delay:.4s}
+h1 .line:nth-child(3){animation-delay:.8s}
+h1 .outline{-webkit-text-stroke:3px var(--ink);color:transparent}
+.lede{font-size:18px;max-width:560px;font-weight:600;line-height:1.45}
+.cta-row{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-top:28px}
+.big-button{display:inline-flex;gap:20px;align-items:center;background:var(--ink);color:var(--lime);padding:18px 26px;text-decoration:none;font-weight:900;border-radius:4px;box-shadow:8px 8px 0 var(--violet);transition:transform .2s,box-shadow .2s}
+.big-button:hover{transform:translate(3px,3px);box-shadow:4px 4px 0 var(--violet)}
+.text-button{font-weight:900;text-decoration:none;border-bottom:3px solid var(--ink)}
+.phone-wrap{position:relative;display:flex;justify-content:center}
+.phone{width:min(360px,80vw);height:620px;background:#f7fbff;border:8px solid var(--ink);border-radius:44px;padding:18px;position:relative;box-shadow:18px 18px 0 rgba(11,43,18,.2);animation:tilt 7s ease-in-out infinite}
+.phone-top{display:flex;justify-content:space-between;font-size:12px;font-weight:900}
+.friend{position:relative;width:180px;height:180px;margin:26px auto 4px;animation:bob 2.6s ease-in-out infinite}
+.friend .blob{position:absolute;inset:18px 8px 12px;border-radius:48% 52% 45% 55%;background:#079cc9;box-shadow:inset -12px -12px 0 rgba(0,0,0,.08)}
+.friend .eye{position:absolute;top:74px;width:18px;height:24px;border-radius:50%;background:#083b52;animation:blink 4.4s infinite}
+.friend .eye.left{left:64px}.friend .eye.right{right:64px}
+.friend .smile{position:absolute;top:110px;left:76px;width:30px;height:16px;border-bottom:5px solid #083b52;border-radius:0 0 40px 40px}
+.bubble{position:absolute;border-radius:50%;background:#7dd3fc;opacity:.8;animation:rise 2.8s infinite}
+.bubble.b1{width:12px;height:12px;left:-8px;top:40px}.bubble.b2{width:8px;height:8px;right:-4px;top:80px;animation-delay:.6s}.bubble.b3{width:16px;height:16px;right:20px;top:10px;animation-delay:1.2s}
+.name{text-align:center;font-weight:900;font-size:20px}.name small{display:block;font-size:11px;font-weight:700;opacity:.6}
+.ring{width:210px;height:210px;margin:18px auto;border-radius:50%;background:conic-gradient(#079cc9 0 78%,#d9f2fb 78% 100%);display:grid;place-items:center}
+.ring-inner{width:168px;height:168px;border-radius:50%;background:#f7fbff;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ring-inner strong{font-size:36px}.ring-inner small{opacity:.6}
+.buttons{display:flex;gap:8px;justify-content:center;margin-top:18px}
+.buttons span{background:#079cc9;color:#fff;padding:12px 14px;border-radius:12px;font-weight:900;font-size:13px}
+.float-chip{position:absolute;background:var(--ink);color:var(--lime);padding:10px 16px;font-weight:900;font-size:12px;transform:rotate(-6deg);box-shadow:6px 6px 0 var(--violet)}
+.chip-a{left:-30px;top:90px}.chip-b{right:-20px;bottom:90px;transform:rotate(6deg)}
+.marquee{overflow:hidden;background:var(--ink);color:var(--lime);font-weight:900;font-size:26px;padding:12px 0;white-space:nowrap;position:relative;z-index:2}
+.marquee-track{display:inline-block;animation:scroll 16s linear infinite}
+@keyframes scroll{to{transform:translateX(-50%)}}
+.dark{background:linear-gradient(160deg,var(--purple),#3b1170);color:#fff;padding:10vh 4vw;position:relative;z-index:2}
+.section-head{display:flex;align-items:baseline;gap:20px;flex-wrap:wrap;margin-bottom:32px}
+.section-head span{font-weight:900;letter-spacing:2px;font-size:12px;color:#c8ff2e}
+.section-head h2{font-size:clamp(34px,6vw,78px);letter-spacing:-4px;line-height:.9;margin:0;text-transform:uppercase}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px}
+.cards article{padding:24px;border:2px solid rgba(255,255,255,.3);border-radius:18px;background:rgba(255,255,255,.06);transition:transform .25s}
+.cards article:hover{transform:translateY(-8px) rotate(-1deg);border-color:#c8ff2e}
+.cards h3{font-size:22px;margin:0 0 10px;color:#c8ff2e}.cards p{line-height:1.5;margin:0}
+.friends{padding:10vh 4vw;background:#fff3d1;position:relative;z-index:2}
+.crew{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px}
+.crew-card{background:#fff;border:3px solid var(--ink);padding:20px;border-radius:20px;text-align:center;transition:transform .2s}
+.crew-card:hover{transform:translateY(-10px) rotate(2deg)}
+.crew-art{width:100px;height:100px;margin:0 auto 16px;position:relative;animation:bob 3s ease-in-out infinite}
+.crew-art:after{content:"";position:absolute;left:30px;top:42px;width:14px;height:14px;border-radius:50%;background:var(--ink);box-shadow:26px 0 0 var(--ink)}
+.droplet{background:#079cc9;border-radius:50% 50% 50% 50% / 60% 60% 40% 40%}
+.sprout{background:#34d399;border-radius:40% 60% 50% 50%}
+.kitty{background:#7c3aed;border-radius:45% 45% 40% 40%}
+.blobby{background:#fb923c;border-radius:55% 45% 50% 50%}
+.crew-card h3{margin:0;font-size:24px}.crew-card p{margin:6px 0 0;opacity:.7}
+.download{padding:10vh 4vw;background:var(--lime);position:relative;z-index:2}
+.section-head.light span{color:var(--ink)}
+.download p{max-width:620px;font-weight:600;line-height:1.5}
+.dark-button{background:var(--purple);color:#fff;box-shadow:8px 8px 0 var(--ink)}
+.small{font-size:13px}.small a{font-weight:900}
+footer{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;padding:24px 4vw;background:var(--ink);color:#fff;font-weight:900;font-size:12px;letter-spacing:2px;position:relative;z-index:2}
+@keyframes floatY{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+@keyframes tilt{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg)}}
+@keyframes blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}
+@keyframes rise{from{transform:translateY(20px);opacity:0}to{transform:translateY(-30px);opacity:0}40%{opacity:.8}}
+@media(max-width:860px){.hero{grid-template-columns:1fr;padding-top:10vh}.phone{margin-top:40px}h1{letter-spacing:-4px}.float-chip{display:none}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.intro{display:none}#particles{display:none}}
 ```
 
 ---

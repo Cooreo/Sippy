@@ -19,7 +19,7 @@ class ReminderScheduler(
     private val settings: SettingsRepository,
     private val notifier: Notifier
 ) {
-    private val workManager = WorkManager.getInstance(context)
+    private val workManager by lazy { WorkManager.getInstance(context) }
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
     suspend fun refresh(exactAllowed: Boolean) {

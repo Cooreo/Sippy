@@ -16,6 +16,8 @@ Sippy is an offline-first water tracking app. We do not operate servers for the 
 
 **Children.** The app is not directed at children under 13 and we do not knowingly collect data from them.
 
+**Optional AI coach.** If you add your own OpenRouter API key in Settings, the app stores that key on your device. When you explicitly ask the coach a question, the app sends your question plus basic local hydration statistics (friend name, today's intake, goal, streak, mood and 7-day average) directly to OpenRouter to generate a reply. Without a key, no AI request is made. Local insights never leave the device.
+
 **Contact.** For privacy questions, contact the developer through the Google Play Store listing's developer contact email.
 
 This policy may be updated; the current version is always the one published with the app listing.

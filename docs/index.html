@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sippy — little friends, big sips</title>
+<meta name="description" content="A local-first water tracker with animated water friends. Download the Android APK.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="intro" id="intro" aria-hidden="true">
+  <div class="intro-line">MEET YOUR</div>
+  <div class="intro-line">WATER</div>
+  <div class="intro-line">FRIENDS</div>
+  <div class="intro-bar"></div>
+</div>
+
+<canvas id="particles" aria-hidden="true"></canvas>
+
+<header class="topbar">
+  <a class="brand" href="#top">SIPPY<span>®</span></a>
+  <nav>
+    <a href="#why">Why</a><a href="#friends">Friends</a><a href="#download">Download</a>
+    <a class="pill" href="#download">GET THE APK ↓</a>
+  </nav>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow">LOCAL-FIRST · ANDROID 8+ · NO ACCOUNT</p>
+    <h1><span class="line">DRINK</span><span class="line">WATER.</span><span class="line outline">MAKE</span><span class="line">A FRIEND.</span></h1>
+    <p class="lede">Sippy turns hydration into a tiny daily ritual. Four animated friends, real streaks, zero cloud. Now with an optional on-device AI coach.</p>
+    <div class="cta-row">
+      <a class="big-button" href="#download">DOWNLOAD APK <span>↓</span></a>
+      <a class="text-button" href="#friends">Meet the friends →</a>
+    </div>
+  </div>
+  <div class="phone-wrap" aria-label="Illustration of the Sippy app home screen">
+    <div class="phone">
+      <div class="phone-top"><span>9:41</span><span>●●●</span></div>
+      <div class="friend" id="friendArt">
+        <div class="blob"></div><div class="eye left"></div><div class="eye right"></div><div class="smile"></div>
+        <div class="bubble b1"></div><div class="bubble b2"></div><div class="bubble b3"></div>
+      </div>
+      <div class="name">BLOBBY <small>Grown · Happy</small></div>
+      <div class="ring"><div class="ring-inner"><strong id="ringValue">1,750</strong><small>ml of 2,000</small></div></div>
+      <div class="buttons"><span>+150</span><span>+250</span><span>+500</span></div>
+    </div>
+    <div class="float-chip chip-a">STAY HYDRATED</div>
+    <div class="float-chip chip-b">NO TRACKING</div>
+  </div>
+</section>
+
+<div class="marquee"><div class="marquee-track">ONE MORE SIP · ONE MORE SIP · ONE MORE SIP · ONE MORE SIP · ONE MORE SIP ·&nbsp;</div></div>
+
+<section class="dark" id="why">
+  <div class="section-head"><span>01 / WHY</span><h2>Built for the everyday.</h2></div>
+  <div class="cards">
+    <article><h3>Friends that feel alive</h3><p>Blink, bob, giggle and dance. Droplet, Sprout, Kitty and Blobby each have their own moves.</p></article>
+    <article><h3>On-device by default</h3><p>Your logs, streaks and friends live in local storage. No account, no ads, no analytics.</p></article>
+    <article><h3>Smart, on your terms</h3><p>Local insights always work. Add your own OpenRouter key only if you want AI coaching.</p></article>
+    <article><h3>Grows with you</h3><p>Earn growth points for every sip and evolve from Baby to Elder.</p></article>
+  </div>
+</section>
+
+<section class="friends" id="friends">
+  <div class="section-head"><span>02 / THE CREW</span><h2>Meet the water friends.</h2></div>
+  <div class="crew">
+    <div class="crew-card"><div class="crew-art droplet"></div><h3>Droplet</h3><p>The original sip buddy.</p></div>
+    <div class="crew-card"><div class="crew-art sprout"></div><h3>Sprout</h3><p>Grows leaves, then flowers.</p></div>
+    <div class="crew-card"><div class="crew-art kitty"></div><h3>Kitty</h3><p>Bows, tail swishes, big hops.</p></div>
+    <div class="crew-card"><div class="crew-art blobby"></div><h3>Blobby</h3><p>Wobbles with pure joy.</p></div>
+  </div>
+</section>
+
+<section class="download" id="download">
+  <div class="section-head light"><span>03 / GET IT</span><h2>Take Sippy with you.</h2></div>
+  <p>Android 8.0 (API 26) or newer. Download the APK, allow installation from your browser, and open it. Your data stays on your device.</p>
+  <a class="big-button dark-button" href="https://github.com/Cooreo/Sippy/releases/download/1.1.0/sippy-debug.apk">DOWNLOAD SIPPY 1.1.0 APK <span>↓</span></a>
+  <p class="small">Prefer to build it yourself? <a href="https://github.com/Cooreo/Sippy">Source on GitHub</a>. <a href="PRIVACY_POLICY.md">Privacy policy</a>.</p>
+</section>
+</main>
+
+<footer><span>SIPPY · MADE FOR THE EVERYDAY SIP</span><span>NO CLOUD. NO ADS. JUST WATER.</span></footer>
+<script src="script.js"></script>
+</body>
+</html>
