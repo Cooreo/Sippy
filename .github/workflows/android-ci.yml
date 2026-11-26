@@ -6,6 +6,10 @@ on:
       - 'arena/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,7 +31,21 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
       - name: Unit tests and builds
-        run: ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleDebug bundleRelease
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleDebug bundleRelease 2>&1 | tee build-ci.log
+      - name: Report build failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "CI build failure run $GITHUB_RUN_ID" \
+            --body "Build log:
+
+\`\`\`
+$(tail -c 60000 build-ci.log)
+\`\`\`"
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
