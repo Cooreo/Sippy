@@ -28,7 +28,8 @@ class SippyVmFactory(private val container: AppContainer) : ViewModelProvider.Fa
             settings = container.settings,
             clock = container.clock,
             scheduler = container.scheduler,
-            notifier = container.notifier
+            notifier = container.notifier,
+            appContext = container.appContext
         ) as T
     }
 }

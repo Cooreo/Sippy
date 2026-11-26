@@ -45,6 +45,14 @@ Sippy/
 
 The UI uses a reusable frosted-glass surface (`ui/theme/Glass.kt`) and an ambient orbital backdrop. Settings has a **Reduce motion** toggle that combines with the Android animation setting. Pets stay 2D Canvas art with gradient shading, extra expressions and smoother easing.
 
+## App updates
+
+Sippy checks GitHub once per day and can also check on demand in Settings. Downloads never start in the background and nothing is installed without you tapping **Download & install**.
+
+The shipped APK is built with `assembleRelease` and signed with the distribution key in `signing/sippy-release.p12`. Keeping that key stable lets Android replace an existing install without deleting your data; every release must still increase `versionCode`. Because earlier builds were debug-signed with a different key, upgrading an old install requires one final uninstall.
+
+Each release carries an `update.json` asset with the version code, APK URL, file size and SHA-256. The app verifies that checksum before handing the APK to Android's installer. If a device blocks sideloading, **Open in browser instead** remains available.
+
 ## Website
 
 `docs/` is the GitHub Pages source (enable Pages → Deploy from a branch → current branch → `/docs`). It has a animated intro, floating particles and a download button pointing at the release APK.

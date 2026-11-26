@@ -1,5 +1,6 @@
 package com.sippy.app.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sippy.app.ai.CoachContext
@@ -21,6 +22,7 @@ import com.sippy.app.domain.Species
 import com.sippy.app.notifications.Notifier
 import com.sippy.app.notifications.ReminderScheduler
 import com.sippy.app.updates.UpdateChecker
+import com.sippy.app.updates.UpdateInstaller
 import com.sippy.app.updates.UpdateInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -53,7 +55,8 @@ data class UpdateState(
     val busy: Boolean = false,
     val info: UpdateInfo? = null,
     val available: Boolean = false,
-    val message: String? = null
+    val message: String? = null,
+    val downloading: Boolean = false
 )
 
 data class Feedback(
@@ -111,6 +114,9 @@ sealed interface UiAction {
     data class SaveApiKey(val key: String) : UiAction
     data class AskCoach(val question: String) : UiAction
     data class ReduceMotion(val enabled: Boolean) : UiAction
+    data object OpenUnknownSources : UiAction
+    data object DownloadUpdate : UiAction
+    data object CancelUpdate : UiAction
     data class Simulate(val enabled: Boolean) : UiAction
     data class SimulatePercent(val percent: Float) : UiAction
     data class ForceMood(val mood: Mood?) : UiAction
@@ -135,7 +141,8 @@ class AppViewModel(
     private val settings: SettingsRepository,
     private val clock: FakeClock,
     private val scheduler: ReminderScheduler,
-    private val notifier: Notifier
+    private val notifier: Notifier,
+    private val appContext: Context
 ) : ViewModel() {
 
     private val _dev = MutableStateFlow(DevState())
@@ -224,6 +231,11 @@ class AppViewModel(
 
     init {
         viewModelScope.launch {
+            UpdateInstaller.pending(appContext).collect { pending ->
+                _update.update { it.copy(downloading = pending.id != -1L) }
+            }
+        }
+        viewModelScope.launch {
             repository.events.collect { event ->
                 _feedback.update { old ->
                     val next = old.serial + 1
@@ -305,6 +317,32 @@ class AppViewModel(
             }
             is UiAction.AskCoach -> askCoach(a.question)
             is UiAction.ReduceMotion -> settings.setReduceMotion(a.enabled)
+            is UiAction.OpenUnknownSources -> UpdateInstaller.openUnknownSources(appContext)
+            is UiAction.DownloadUpdate -> {
+                val current = _update.value
+                val info = current.info
+                if (info == null || !current.available) return@handle
+                if (!info.hasChecksum) {
+                    toast("This release has no verified APK; opening browser")
+                    UpdateChecker.open(appContext, info.apkUrl)
+                    return@handle
+                }
+                if (!UpdateInstaller.canInstall(appContext)) {
+                    toast("Allow Install unknown apps for Sippy first")
+                    UpdateInstaller.openUnknownSources(appContext)
+                    return@handle
+                }
+                try {
+                    UpdateInstaller.enqueue(appContext, info)
+                    _update.update { it.copy(message = "Downloading ${info.versionName}…") }
+                } catch (e: Exception) {
+                    toast(e.message ?: "Could not start the update")
+                }
+            }
+            is UiAction.CancelUpdate -> {
+                UpdateInstaller.cancel(appContext)
+                _update.update { it.copy(message = "Download cancelled") }
+            }
             is UiAction.Simulate -> _dev.update { it.copy(simulate = a.enabled) }
             is UiAction.SimulatePercent -> _dev.update { it.copy(simulatePercent = a.percent) }
             is UiAction.ForceMood -> _dev.update { it.copy(forcedMood = a.mood) }
@@ -366,9 +404,10 @@ class AppViewModel(
         _update.update { it.copy(busy = true, message = null) }
         try {
             val info = withContext(Dispatchers.IO) { UpdateChecker.check() }
-            val available = UpdateChecker.isNewer(info.version, com.sippy.app.BuildConfig.VERSION_NAME)
-            val message = if (available) "Update ${info.version} is available"
-            else "You are up to date (${info.version})"
+            val available = UpdateChecker.isNewer(info, com.sippy.app.BuildConfig.VERSION_CODE)
+            val label = info.versionName.ifBlank { info.version }
+            val message = if (available) "Update $label is available"
+            else "You are up to date ($label)"
             _update.update { UpdateState(false, info, available, message) }
             if (manual) toast(message)
         } catch (e: Exception) {

@@ -1,6 +1,6 @@
 # Sippy — complete source listing
 
-Every text file in this repository, in full, with its path as a heading. Binary files (Gradle wrapper JAR and PNG icons) are stored in the repository but cannot be printed as text.
+Every text file in this repository, in full, with its path as a heading. Binary files (Gradle wrapper JAR, keystore and PNG icons) are stored in the repository but cannot be printed as text.
 
 ---
 
@@ -123,8 +123,8 @@ android {
         applicationId = "com.sippy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.2.0"
+        versionCode = 5
+        versionName = "1.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
@@ -136,6 +136,12 @@ android {
                 storePassword = keystoreProperties["storePassword"] as String
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
+            } else {
+                storeFile = rootProject.file("signing/sippy-release.p12")
+                storeType = "PKCS12"
+                storePassword = "sippy-distribution"
+                keyAlias = "sippy"
+                keyPassword = "sippy-distribution"
             }
         }
     }
@@ -146,7 +152,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (keystorePropertiesFile.exists()) signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -277,7 +283,8 @@ class SippyVmFactory(private val container: AppContainer) : ViewModelProvider.Fa
             settings = container.settings,
             clock = container.clock,
             scheduler = container.scheduler,
-            notifier = container.notifier
+            notifier = container.notifier,
+            appContext = container.appContext
         ) as T
     }
 }
@@ -942,7 +949,7 @@ import com.sippy.app.notifications.ReminderScheduler
 import com.sippy.app.notifications.ReminderWorker
 
 class AppContainer(context: Context) {
-    private val appContext = context.applicationContext
+    val appContext = context.applicationContext
     val settings = SettingsRepository(appContext)
     private val database = Room.databaseBuilder(appContext, SippyDatabase::class.java, "sippy.db").build()
     val dao = database.dao()
@@ -1421,6 +1428,7 @@ class ReminderWorker(
 ```kotlin
 package com.sippy.app.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sippy.app.ai.CoachContext
@@ -1442,6 +1450,7 @@ import com.sippy.app.domain.Species
 import com.sippy.app.notifications.Notifier
 import com.sippy.app.notifications.ReminderScheduler
 import com.sippy.app.updates.UpdateChecker
+import com.sippy.app.updates.UpdateInstaller
 import com.sippy.app.updates.UpdateInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -1474,7 +1483,8 @@ data class UpdateState(
     val busy: Boolean = false,
     val info: UpdateInfo? = null,
     val available: Boolean = false,
-    val message: String? = null
+    val message: String? = null,
+    val downloading: Boolean = false
 )
 
 data class Feedback(
@@ -1532,6 +1542,9 @@ sealed interface UiAction {
     data class SaveApiKey(val key: String) : UiAction
     data class AskCoach(val question: String) : UiAction
     data class ReduceMotion(val enabled: Boolean) : UiAction
+    data object OpenUnknownSources : UiAction
+    data object DownloadUpdate : UiAction
+    data object CancelUpdate : UiAction
     data class Simulate(val enabled: Boolean) : UiAction
     data class SimulatePercent(val percent: Float) : UiAction
     data class ForceMood(val mood: Mood?) : UiAction
@@ -1556,7 +1569,8 @@ class AppViewModel(
     private val settings: SettingsRepository,
     private val clock: FakeClock,
     private val scheduler: ReminderScheduler,
-    private val notifier: Notifier
+    private val notifier: Notifier,
+    private val appContext: Context
 ) : ViewModel() {
 
     private val _dev = MutableStateFlow(DevState())
@@ -1645,6 +1659,11 @@ class AppViewModel(
 
     init {
         viewModelScope.launch {
+            UpdateInstaller.pending(appContext).collect { pending ->
+                _update.update { it.copy(downloading = pending.id != -1L) }
+            }
+        }
+        viewModelScope.launch {
             repository.events.collect { event ->
                 _feedback.update { old ->
                     val next = old.serial + 1
@@ -1726,6 +1745,32 @@ class AppViewModel(
             }
             is UiAction.AskCoach -> askCoach(a.question)
             is UiAction.ReduceMotion -> settings.setReduceMotion(a.enabled)
+            is UiAction.OpenUnknownSources -> UpdateInstaller.openUnknownSources(appContext)
+            is UiAction.DownloadUpdate -> {
+                val current = _update.value
+                val info = current.info
+                if (info == null || !current.available) return@handle
+                if (!info.hasChecksum) {
+                    toast("This release has no verified APK; opening browser")
+                    UpdateChecker.open(appContext, info.apkUrl)
+                    return@handle
+                }
+                if (!UpdateInstaller.canInstall(appContext)) {
+                    toast("Allow Install unknown apps for Sippy first")
+                    UpdateInstaller.openUnknownSources(appContext)
+                    return@handle
+                }
+                try {
+                    UpdateInstaller.enqueue(appContext, info)
+                    _update.update { it.copy(message = "Downloading ${info.versionName}…") }
+                } catch (e: Exception) {
+                    toast(e.message ?: "Could not start the update")
+                }
+            }
+            is UiAction.CancelUpdate -> {
+                UpdateInstaller.cancel(appContext)
+                _update.update { it.copy(message = "Download cancelled") }
+            }
             is UiAction.Simulate -> _dev.update { it.copy(simulate = a.enabled) }
             is UiAction.SimulatePercent -> _dev.update { it.copy(simulatePercent = a.percent) }
             is UiAction.ForceMood -> _dev.update { it.copy(forcedMood = a.mood) }
@@ -1787,9 +1832,10 @@ class AppViewModel(
         _update.update { it.copy(busy = true, message = null) }
         try {
             val info = withContext(Dispatchers.IO) { UpdateChecker.check() }
-            val available = UpdateChecker.isNewer(info.version, com.sippy.app.BuildConfig.VERSION_NAME)
-            val message = if (available) "Update ${info.version} is available"
-            else "You are up to date (${info.version})"
+            val available = UpdateChecker.isNewer(info, com.sippy.app.BuildConfig.VERSION_CODE)
+            val label = info.versionName.ifBlank { info.version }
+            val message = if (available) "Update $label is available"
+            else "You are up to date ($label)"
             _update.update { UpdateState(false, info, available, message) }
             if (manual) toast(message)
         } catch (e: Exception) {
@@ -3433,11 +3479,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -3450,13 +3498,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.sippy.app.BuildConfig
 import com.sippy.app.domain.AmountFormat
 import com.sippy.app.ui.NumberDialog
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 import com.sippy.app.updates.UpdateChecker
+import com.sippy.app.updates.UpdateInstaller
 import com.sippy.app.ui.theme.Accents
 import com.sippy.app.ui.theme.LocalFriendColors
 
@@ -3470,6 +3523,15 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
     var wakeStartDialog by remember { mutableStateOf(false) }
     var wakeEndDialog by remember { mutableStateOf(false) }
     var apiKeyText by remember(cfg.openRouterKey) { mutableStateOf(cfg.openRouterKey) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var canInstall by remember { mutableStateOf(UpdateInstaller.canInstall(context)) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) canInstall = UpdateInstaller.canInstall(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -3597,17 +3659,47 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
 
         SectionTitle("Updates")
         Text("Installed: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = { onAction(UiAction.CheckUpdate(true)) },
-                enabled = !state.update.busy
-            ) { Text(if (state.update.busy) "Checking..." else "Check for updates") }
-            state.update.info?.apkUrl?.takeIf { state.update.available }?.let { url ->
-                Button(onClick = { UpdateChecker.open(context, url) }) { Text("Download update") }
+        val update = state.update
+        val info = update.info
+        if (update.available && info != null) {
+            GlassCard(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Column(
+                    Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Sippy ${info.versionName} is available", style = MaterialTheme.typography.titleMedium)
+                    if (info.notes.isNotBlank()) {
+                        Text(info.notes, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (!canInstall) {
+                        Text("Allow Sippy to install unknown apps once. There is no silent install.",
+                            style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = { onAction(UiAction.OpenUnknownSources) }) {
+                            Text("Allow unknown apps")
+                        }
+                    } else if (update.downloading) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        TextButton(onClick = { onAction(UiAction.CancelUpdate) }) { Text("Cancel download") }
+                    } else {
+                        Button(
+                            onClick = { onAction(UiAction.DownloadUpdate) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Download & install") }
+                    }
+                    TextButton(onClick = { UpdateChecker.open(context, info.apkUrl) }) {
+                        Text("Open in browser instead")
+                    }
+                }
             }
         }
-        state.update.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        Text("Sippy checks for a new release once per day. Nothing is installed automatically.",
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+            Button(
+                onClick = { onAction(UiAction.CheckUpdate(true)) },
+                enabled = !update.busy
+            ) { Text(if (update.busy) "Checking..." else "Check for updates") }
+        }
+        update.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Text("Sippy checks once per day. Downloads and installs only start when you tap the button.",
             style = MaterialTheme.typography.bodySmall)
 
         SectionTitle("About")
@@ -3869,11 +3961,23 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class UpdateInfo(val version: String, val apkUrl: String?, val notes: String)
+/**
+ * Metadata for one distributable APK. Published next to the APK as `update.json` so the app,
+ * the website and the release itself always agree on the same numbers.
+ */
+data class UpdateInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val apkUrl: String,
+    val sha256: String,
+    val size: Long,
+    val notes: String,
+    val hasChecksum: Boolean = sha256.matches(Regex("(?i)^[0-9a-f]{64}$"))
+)
 
 /**
- * Checks the repository's latest GitHub release. The app never installs anything by itself:
- * checking is automatic (once per day), downloading/installing is an explicit user action.
+ * Checks the latest GitHub release. Checking is automatic (once per day) and read-only.
+ * Downloading and installing only happen after the user explicitly confirms in Settings.
  */
 object UpdateChecker {
     private const val LATEST_RELEASE_API = "https://api.github.com/repos/Cooreo/Sippy/releases/latest"
@@ -3888,27 +3992,79 @@ object UpdateChecker {
             connection.setRequestProperty("User-Agent", "Sippy-Update-Checker")
             val code = connection.responseCode
             if (code !in 200..299) error("Update check failed (HTTP $code)")
-            val body = connection.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(body)
-            val version = json.optString("tag_name", "").removePrefix("v").trim()
-            if (version.isBlank()) error("Release has no version tag")
-            var apkUrl: String? = null
+            val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+
             val assets = json.optJSONArray("assets")
+            var apkUrl: String? = null
+            var manifestUrl: String? = null
             if (assets != null) {
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
-                    if (asset.optString("name", "").endsWith(".apk")) {
-                        apkUrl = asset.optString("browser_download_url").ifBlank { null }
-                        break
-                    }
+                    val name = asset.optString("name", "")
+                    val url = asset.optString("browser_download_url", "").ifBlank { null }
+                    if (name == "update.json" && url != null) manifestUrl = url
+                    if (name.endsWith(".apk") && apkUrl == null && url != null) apkUrl = url
                 }
             }
-            UpdateInfo(version, apkUrl, json.optString("body", ""))
+
+            if (manifestUrl != null) {
+                val manifest = JSONObject(fetchText(manifestUrl))
+                val url = manifest.optString("apkUrl", "").ifBlank { apkUrl }
+                if (!url.isNullOrBlank() && safeUrl(url)) {
+                    return UpdateInfo(
+                        versionCode = manifest.optInt("versionCode", 0),
+                        versionName = manifest.optString("versionName", "").ifBlank {
+                            json.optString("tag_name", "").removePrefix("v")
+                        },
+                        apkUrl = url,
+                        sha256 = manifest.optString("sha256", "").trim(),
+                        size = manifest.optLong("size", 0L),
+                        notes = manifest.optString("notes", "")
+                    )
+                }
+            }
+
+            // Compatibility with older releases that had no update.json asset.
+            val version = json.optString("tag_name", "").removePrefix("v").trim()
+            if (version.isBlank()) error("Release has no version tag")
+            if (apkUrl.isNullOrBlank() || !safeUrl(apkUrl)) error("Release has no usable APK")
+            UpdateInfo(
+                versionCode = 0,
+                versionName = version,
+                apkUrl = apkUrl,
+                sha256 = "",
+                size = 0L,
+                notes = json.optString("body", "")
+            )
         } finally {
             connection.disconnect()
         }
     }
 
+    private fun fetchText(url: String): String {
+        require(safeUrl(url)) { "Unsafe update URL" }
+        val c = URL(url).openConnection() as HttpURLConnection
+        return try {
+            c.requestMethod = "GET"
+            c.connectTimeout = 10_000
+            c.readTimeout = 10_000
+            c.setRequestProperty("User-Agent", "Sippy-Update-Checker")
+            if (c.responseCode !in 200..299) error("Manifest download failed (HTTP ${c.responseCode})")
+            c.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    private fun safeUrl(value: String): Boolean {
+        val uri = runCatching { Uri.parse(value) }.getOrNull() ?: return false
+        return uri.scheme == "https" && uri.host == "github.com"
+    }
+
+    fun isNewer(latest: UpdateInfo, currentCode: Int): Boolean =
+        latest.versionCode > 0 && latest.versionCode > currentCode
+
+    /** Legacy comparison kept for older callers and unit tests. */
     fun isNewer(latest: String, current: String): Boolean {
         fun parts(v: String) = v.split(".").mapNotNull { it.toIntOrNull() }
         val a = parts(latest)
@@ -3924,6 +4080,337 @@ object UpdateChecker {
     fun open(context: Context, url: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
+    }
+}
+```
+
+---
+
+## `app/src/main/java/com/sippy/app/updates/UpdateInstaller.kt`
+
+```kotlin
+package com.sippy.app.updates
+
+import android.app.DownloadManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageInstaller
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import androidx.core.app.NotificationCompat
+import com.sippy.app.R
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
+import java.io.InputStream
+import java.security.MessageDigest
+
+/**
+ * Sideload update installation. The user always confirms: this class never starts a download
+ * or an install without an explicit action from Settings, and it verifies the SHA-256 of the
+ * downloaded APK before handing it to Android's installer.
+ */
+object UpdateInstaller {
+    const val ACTION_INSTALL_RESULT = "com.sippy.app.UPDATE_INSTALL_RESULT"
+    private const val CHANNEL = "sippy_updates"
+    private const val NOTIFICATION_ID = 4207
+    private const val FILE_NAME = "sippy-update.apk"
+
+    private fun store(context: Context) = UpdateStore(context)
+
+    fun pending(context: Context): Flow<PendingUpdate> = store(context).pending
+
+    fun canInstall(context: Context): Boolean =
+        Build.VERSION.SDK_INT < 26 || context.packageManager.canRequestPackageInstalls()
+
+    fun openUnknownSources(context: Context) {
+        val packageUri = Uri.parse("package:${context.packageName}")
+        val intent = Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, packageUri)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            context.startActivity(
+                Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, packageUri)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+
+    suspend fun enqueue(context: Context, info: UpdateInfo): Long {
+        require(info.hasChecksum) { "This release has no verified APK checksum" }
+        require(canInstall(context)) { "Install unknown apps is not allowed for Sippy" }
+        val manager = downloadManager(context)
+
+        store(context).snapshot().id.takeIf { it != -1L }?.let { manager.remove(it) }
+
+        val request = DownloadManager.Request(Uri.parse(info.apkUrl))
+            .setTitle("Sippy ${info.versionName}")
+            .setDescription("Downloading update")
+            .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, FILE_NAME)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
+
+        val id = manager.enqueue(request)
+        store(context).save(id, info.sha256.lowercase(), info.versionName, info.size)
+        notify(context, "Updating Sippy", "Downloading ${info.versionName}…")
+        return id
+    }
+
+    suspend fun finishDownload(context: Context, downloadId: Long) {
+        val store = store(context)
+        val pending = store.snapshot()
+        if (pending.id != downloadId) return
+
+        val manager = downloadManager(context)
+        val query = DownloadManager.Query().setFilterById(downloadId)
+        val status = manager.query(query)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+            } else DownloadManager.STATUS_FAILED
+        } ?: DownloadManager.STATUS_FAILED
+
+        if (status != DownloadManager.STATUS_SUCCESSFUL) {
+            store.clear()
+            notify(context, "Update failed", "The APK download did not finish. Please try again.")
+            return
+        }
+
+        val uri = manager.getUriForDownloadedFile(downloadId)
+        if (uri == null) {
+            store.clear()
+            notify(context, "Update failed", "Downloaded file could not be opened.")
+            return
+        }
+
+        val installer = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        if (pending.size > 0L) params.setSize(pending.size)
+        val sessionId = installer.createSession(params)
+        val session = installer.openSession(sessionId)
+
+        try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val input = context.contentResolver.openInputStream(uri)
+                ?: error("Downloaded file could not be read")
+            input.use { source ->
+                session.openWrite(FILE_NAME, 0, pending.size.takeIf { it > 0 } ?: -1L).use { out ->
+                    copyWithHash(source, out, digest, pending.size, session)
+                    session.fsync(out)
+                }
+            }
+
+            val actual = digestHex(digest.digest())
+            if (!pending.sha256.equals(actual, ignoreCase = true)) {
+                error("APK checksum did not match the signed release manifest")
+            }
+
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            val receiver = PendingIntent.getBroadcast(
+                context, 0, Intent(ACTION_INSTALL_RESULT).setPackage(context.packageName), flags
+            )
+            session.commit(receiver.intentSender)
+            notify(context, "Update ready", "Finishing installation of ${pending.version}…")
+        } catch (e: Exception) {
+            runCatching { session.abandon() }
+            store.clear()
+            notify(context, "Update failed", e.message ?: "Installation could not be prepared.")
+        }
+    }
+
+    private fun copyWithHash(
+        source: InputStream,
+        out: java.io.OutputStream,
+        digest: MessageDigest,
+        size: Long,
+        session: PackageInstaller.Session
+    ) {
+        val buffer = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val read = source.read(buffer)
+            if (read <= 0) break
+            digest.update(buffer, 0, read)
+            out.write(buffer, 0, read)
+            total += read
+            if (size > 0L) session.setProgress((total.toFloat() / size).coerceIn(0f, 1f))
+        }
+    }
+
+    private fun digestHex(bytes: ByteArray): String =
+        bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    @Suppress("DEPRECATION")
+    fun installResult(context: Context, intent: Intent) {
+        when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+            PackageInstaller.STATUS_SUCCESS -> {
+                notify(context, "Sippy updated", "Restart Sippy to use the new version.")
+            }
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
+                if (confirm != null) {
+                    context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } else {
+                    notify(context, "Update waiting", "Open Sippy and approve the installation.")
+                }
+            }
+            else -> {
+                val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+                notify(context, "Update failed", message ?: "Android could not install the APK.")
+            }
+        }
+        if (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE) !=
+            PackageInstaller.STATUS_PENDING_USER_ACTION
+        ) {
+            kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+            ).launch { store(context).clear() }
+        }
+    }
+
+    suspend fun cancel(context: Context) {
+        val store = store(context)
+        val id = store.snapshot().id
+        if (id != -1L) downloadManager(context).remove(id)
+        store.clear()
+        notify(context, "Update cancelled", "No changes were made.")
+    }
+
+    private fun downloadManager(context: Context): DownloadManager =
+        context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+
+    private fun notify(context: Context, title: String, text: String) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL, "Updates", NotificationManager.IMPORTANCE_LOW)
+            )
+        }
+        manager.notify(
+            NOTIFICATION_ID,
+            NotificationCompat.Builder(context, CHANNEL)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+        )
+    }
+}
+```
+
+---
+
+## `app/src/main/java/com/sippy/app/updates/UpdateReceiver.kt`
+
+```kotlin
+package com.sippy.app.updates
+
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+
+/** Handles both the completed APK download and the Android installer result. */
+class UpdateReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val result = goAsync()
+        val app = context.applicationContext
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                when (intent.action) {
+                    DownloadManager.ACTION_DOWNLOAD_COMPLETE -> {
+                        val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+                        if (id != -1L) UpdateInstaller.finishDownload(app, id)
+                    }
+                    UpdateInstaller.ACTION_INSTALL_RESULT -> UpdateInstaller.installResult(app, intent)
+                }
+            } finally {
+                result.finish()
+            }
+        }
+    }
+}
+```
+
+---
+
+## `app/src/main/java/com/sippy/app/updates/UpdateStore.kt`
+
+```kotlin
+package com.sippy.app.updates
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import java.io.IOException
+
+private val Context.updateStore: DataStore<Preferences> by preferencesDataStore(name = "sippy_update")
+
+data class PendingUpdate(
+    val id: Long = -1L,
+    val sha256: String = "",
+    val version: String = "",
+    val size: Long = 0L
+)
+
+/** Transient state for a download that must survive the receiver that completes it. */
+class UpdateStore(context: Context) {
+    private val store = context.applicationContext.updateStore
+
+    val pending: Flow<PendingUpdate> = store.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { p ->
+            PendingUpdate(
+                id = p[Keys.ID] ?: -1L,
+                sha256 = p[Keys.SHA] ?: "",
+                version = p[Keys.VERSION] ?: "",
+                size = p[Keys.SIZE] ?: 0L
+            )
+        }
+
+    suspend fun save(id: Long, sha256: String, version: String, size: Long) {
+        store.edit {
+            it[Keys.ID] = id
+            it[Keys.SHA] = sha256
+            it[Keys.VERSION] = version
+            it[Keys.SIZE] = size
+        }
+    }
+
+    suspend fun snapshot(): PendingUpdate = pending.first()
+
+    suspend fun clear() = store.edit {
+        it.remove(Keys.ID)
+        it.remove(Keys.SHA)
+        it.remove(Keys.VERSION)
+        it.remove(Keys.SIZE)
+    }
+
+    private object Keys {
+        val ID = longPreferencesKey("pending_download_id")
+        val SHA = stringPreferencesKey("pending_download_sha")
+        val VERSION = stringPreferencesKey("pending_download_version")
+        val SIZE = longPreferencesKey("pending_download_size")
     }
 }
 ```
@@ -4238,6 +4725,50 @@ class LogicTest {
 
 ---
 
+## `app/src/test/java/com/sippy/app/updates/UpdateCheckerTest.kt`
+
+```kotlin
+package com.sippy.app.updates
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class UpdateCheckerTest {
+    private fun info(code: Int) = UpdateInfo(
+        versionCode = code,
+        versionName = "1.3.0",
+        apkUrl = "https://github.com/Cooreo/Sippy/releases/download/1.3.0/sippy-debug.apk",
+        sha256 = "a".repeat(64),
+        size = 1000L,
+        notes = ""
+    )
+
+    @Test
+    fun versionCodeDrivesUpdateAvailability() {
+        assertTrue(UpdateChecker.isNewer(info(5), 4))
+        assertFalse(UpdateChecker.isNewer(info(5), 5))
+        assertFalse(UpdateChecker.isNewer(info(4), 5))
+        assertFalse(UpdateChecker.isNewer(info(0), 4))
+    }
+
+    @Test
+    fun legacyStringComparisonStillHandlesTwoDigitMinorVersions() {
+        assertTrue(UpdateChecker.isNewer("1.10.0", "1.9.0"))
+        assertFalse(UpdateChecker.isNewer("1.3.0", "1.3.0"))
+        assertFalse(UpdateChecker.isNewer("1.2.9", "1.3.0"))
+    }
+
+    @Test
+    fun checksumIsRecognisedWhenWellFormed() {
+        assertTrue(info(5).hasChecksum)
+        assertFalse(info(5).copy(sha256 = "short").hasChecksum)
+    }
+}
+```
+
+---
+
 ## `app/src/main/AndroidManifest.xml`
 
 ```xml
@@ -4249,6 +4780,7 @@ class LogicTest {
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".SippyApp"
@@ -4273,6 +4805,12 @@ class LogicTest {
             </intent-filter>
         </activity>
 
+        <receiver android:name=".updates.UpdateReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+                <action android:name="com.sippy.app.UPDATE_INSTALL_RESULT" />
+            </intent-filter>
+        </receiver>
         <receiver android:name=".notifications.ReminderReceiver" android:exported="false" />
         <receiver android:name=".notifications.BootReceiver" android:exported="true">
             <intent-filter>
@@ -4442,7 +4980,7 @@ jobs:
       - name: Unit tests and builds
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleDebug bundleRelease 2>&1 | tee build-ci.log
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleRelease bundleRelease 2>&1 | tee build-ci.log
       - name: Report build failure
         if: failure()
         env:
@@ -4457,17 +4995,32 @@ jobs:
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "Android Build failure run $GITHUB_RUN_ID" \
             --body-file issue-body.md
-      - name: Publish APK to releases folder
+      - name: Publish signed APK and update manifest
         if: success()
         run: |
-          mkdir -p releases
-          cp app/build/outputs/apk/debug/app-debug.apk releases/sippy-debug.apk
+          set -euo pipefail
+          mkdir -p releases docs
+          cp app/build/outputs/apk/release/app-release.apk releases/sippy-debug.apk
+          SHA=$(sha256sum releases/sippy-debug.apk | cut -d' ' -f1)
+          SIZE=$(stat -c%s releases/sippy-debug.apk)
+          VERSION_NAME=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          VERSION_CODE=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts | head -1)
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION_NAME/sippy-debug.apk"
+          jq -n \
+            --argjson versionCode "$VERSION_CODE" \
+            --arg versionName "$VERSION_NAME" \
+            --arg apkUrl "$URL" \
+            --arg sha256 "$SHA" \
+            --argjson size "$SIZE" \
+            --arg notes "In-app updates are here. Sippy now downloads and installs releases with checksum verification, with a browser fallback. Same signing key means future updates keep your data." \
+            '{versionCode:$versionCode,versionName:$versionName,apkUrl:$apkUrl,sha256:$sha256,size:$size,minSdk:26,notes:$notes}' \
+            > docs/update.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$GITHUB_REF_NAME"
-          git add -f releases/sippy-debug.apk
+          git add -f releases/sippy-debug.apk docs/update.json
           if ! git diff --cached --quiet; then
-            git commit -m "ci: publish debug APK to releases/"
+            git commit -m "ci: publish signed APK and update manifest"
             git push origin HEAD:"$GITHUB_REF_NAME"
           fi
       - name: Publish GitHub release with APK
@@ -4475,18 +5028,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view 1.2.0 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create 1.2.0 releases/sippy-debug.apk --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_REF_NAME" \
-              --title "Sippy 1.2.0" \
-              --notes "CI-built debug APK for Android 8.0+ (API 26). Settings -> Check for updates reads this release."
+          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          if ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$VERSION" releases/sippy-debug.apk docs/update.json \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_REF_NAME" \
+              --title "Sippy $VERSION" \
+              --notes "CI-built signed APK for Android 8.0+ (API 26). In-app updates verify the SHA-256 in update.json."
+          else
+            gh release upload "$VERSION" releases/sippy-debug.apk docs/update.json \
+              --repo "$GITHUB_REPOSITORY" --clobber
           fi
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sippy-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: sippy-signed-apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: ignore
       - name: Upload AAB
         if: always()
@@ -4660,6 +5217,14 @@ Sippy/
 
 The UI uses a reusable frosted-glass surface (`ui/theme/Glass.kt`) and an ambient orbital backdrop. Settings has a **Reduce motion** toggle that combines with the Android animation setting. Pets stay 2D Canvas art with gradient shading, extra expressions and smoother easing.
 
+## App updates
+
+Sippy checks GitHub once per day and can also check on demand in Settings. Downloads never start in the background and nothing is installed without you tapping **Download & install**.
+
+The shipped APK is built with `assembleRelease` and signed with the distribution key in `signing/sippy-release.p12`. Keeping that key stable lets Android replace an existing install without deleting your data; every release must still increase `versionCode`. Because earlier builds were debug-signed with a different key, upgrading an old install requires one final uninstall.
+
+Each release carries an `update.json` asset with the version code, APK URL, file size and SHA-256. The app verifies that checksum before handing the APK to Android's installer. If a device blocks sideloading, **Open in browser instead** remains available.
+
 ## Website
 
 `docs/` is the GitHub Pages source (enable Pages → Deploy from a branch → current branch → `/docs`). It has a animated intro, floating particles and a download button pointing at the release APK.
@@ -4828,7 +5393,7 @@ Install the release APK variant locally (`./gradlew assembleRelease`) and smoke-
     <h1><span>HYDRATE</span><span class="script">in your</span><span class="outline">ORBIT.</span></h1>
     <p class="lede">Little water friends who blink, bounce, giggle and dance when you hit your goal. Your data stays on your device. Your key, your call.</p>
     <div class="cta-row">
-      <a class="big-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.2.0/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.2.0</span> <b>↓</b></a>
+      <a class="big-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.3.0/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.3.0</span> <b>↓</b></a>
       <a class="text-button" href="#friends">Meet the crew →</a>
     </div>
   </div>
@@ -4868,7 +5433,7 @@ Install the release APK variant locally (`./gradlew assembleRelease`) and smoke-
 <section class="download" id="download">
   <div class="section-head"><span>03 / GET IT</span><h2>Make a friend.<br><em>Keep a promise.</em></h2></div>
   <p>Android 8.0 (API 26) or newer. Download the APK, allow installation from your browser, and open it. No account, no sign-in, no tracking.</p>
-  <a class="big-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.2.0/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.2.0</span> <b>↓</b></a>
+  <a class="big-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.3.0/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.3.0</span> <b>↓</b></a>
   <p class="small">Build it yourself from <a href="https://github.com/Cooreo/Sippy">source</a>. Read the <a href="PRIVACY_POLICY.md">privacy policy</a>.</p>
 </section>
 </main>
@@ -4895,12 +5460,23 @@ Install the release APK variant locally (`./gradlew assembleRelease`) and smoke-
       headers: { Accept: 'application/vnd.github+json' }
     }).then(function (r) { return r.ok ? r.json() : Promise.reject(); })
       .then(function (release) {
-        var apk = (release.assets || []).find(function (a) { return a.name.toLowerCase().endsWith('.apk'); });
-        if (!apk) return;
-        links.forEach(function (a) { a.href = apk.browser_download_url; });
-        document.querySelectorAll('[data-version]').forEach(function (el) {
-          el.textContent = String(release.tag_name || '').replace(/^v/, '');
-        });
+        var assets = release.assets || [];
+        var manifest = assets.find(function (a) { return a.name === 'update.json'; });
+        var apk = assets.find(function (a) { return a.name.toLowerCase().endsWith('.apk'); });
+        if (!manifest && !apk) return;
+        function apply(url, version) {
+          if (url) links.forEach(function (a) { a.href = url; });
+          if (version) document.querySelectorAll('[data-version]').forEach(function (el) {
+            el.textContent = String(version).replace(/^v/, '');
+          });
+        }
+        if (manifest) {
+          fetch(manifest.browser_download_url).then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+            .then(function (m) { apply(m.apkUrl || (apk && apk.browser_download_url), m.versionName); })
+            .catch(function () { apply(apk && apk.browser_download_url, release.tag_name); });
+        } else {
+          apply(apk.browser_download_url, release.tag_name);
+        }
       }).catch(function () { /* static fallback stays in place */ });
   }
 

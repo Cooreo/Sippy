@@ -21,11 +21,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,13 +40,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.sippy.app.BuildConfig
 import com.sippy.app.domain.AmountFormat
 import com.sippy.app.ui.NumberDialog
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 import com.sippy.app.updates.UpdateChecker
+import com.sippy.app.updates.UpdateInstaller
 import com.sippy.app.ui.theme.Accents
 import com.sippy.app.ui.theme.LocalFriendColors
 
@@ -58,6 +65,15 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
     var wakeStartDialog by remember { mutableStateOf(false) }
     var wakeEndDialog by remember { mutableStateOf(false) }
     var apiKeyText by remember(cfg.openRouterKey) { mutableStateOf(cfg.openRouterKey) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var canInstall by remember { mutableStateOf(UpdateInstaller.canInstall(context)) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) canInstall = UpdateInstaller.canInstall(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -185,17 +201,47 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
 
         SectionTitle("Updates")
         Text("Installed: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = { onAction(UiAction.CheckUpdate(true)) },
-                enabled = !state.update.busy
-            ) { Text(if (state.update.busy) "Checking..." else "Check for updates") }
-            state.update.info?.apkUrl?.takeIf { state.update.available }?.let { url ->
-                Button(onClick = { UpdateChecker.open(context, url) }) { Text("Download update") }
+        val update = state.update
+        val info = update.info
+        if (update.available && info != null) {
+            GlassCard(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Column(
+                    Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Sippy ${info.versionName} is available", style = MaterialTheme.typography.titleMedium)
+                    if (info.notes.isNotBlank()) {
+                        Text(info.notes, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (!canInstall) {
+                        Text("Allow Sippy to install unknown apps once. There is no silent install.",
+                            style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = { onAction(UiAction.OpenUnknownSources) }) {
+                            Text("Allow unknown apps")
+                        }
+                    } else if (update.downloading) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        TextButton(onClick = { onAction(UiAction.CancelUpdate) }) { Text("Cancel download") }
+                    } else {
+                        Button(
+                            onClick = { onAction(UiAction.DownloadUpdate) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Download & install") }
+                    }
+                    TextButton(onClick = { UpdateChecker.open(context, info.apkUrl) }) {
+                        Text("Open in browser instead")
+                    }
+                }
             }
         }
-        state.update.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        Text("Sippy checks for a new release once per day. Nothing is installed automatically.",
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+            Button(
+                onClick = { onAction(UiAction.CheckUpdate(true)) },
+                enabled = !update.busy
+            ) { Text(if (update.busy) "Checking..." else "Check for updates") }
+        }
+        update.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Text("Sippy checks once per day. Downloads and installs only start when you tap the button.",
             style = MaterialTheme.typography.bodySmall)
 
         SectionTitle("About")

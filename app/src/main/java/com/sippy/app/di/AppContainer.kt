@@ -14,7 +14,7 @@ import com.sippy.app.notifications.ReminderScheduler
 import com.sippy.app.notifications.ReminderWorker
 
 class AppContainer(context: Context) {
-    private val appContext = context.applicationContext
+    val appContext = context.applicationContext
     val settings = SettingsRepository(appContext)
     private val database = Room.databaseBuilder(appContext, SippyDatabase::class.java, "sippy.db").build()
     val dao = database.dao()

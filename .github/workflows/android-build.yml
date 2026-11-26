@@ -33,7 +33,7 @@ jobs:
       - name: Unit tests and builds
         run: |
           set -o pipefail
-          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleDebug bundleRelease 2>&1 | tee build-ci.log
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleRelease bundleRelease 2>&1 | tee build-ci.log
       - name: Report build failure
         if: failure()
         env:
@@ -48,17 +48,32 @@ jobs:
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "Android Build failure run $GITHUB_RUN_ID" \
             --body-file issue-body.md
-      - name: Publish APK to releases folder
+      - name: Publish signed APK and update manifest
         if: success()
         run: |
-          mkdir -p releases
-          cp app/build/outputs/apk/debug/app-debug.apk releases/sippy-debug.apk
+          set -euo pipefail
+          mkdir -p releases docs
+          cp app/build/outputs/apk/release/app-release.apk releases/sippy-debug.apk
+          SHA=$(sha256sum releases/sippy-debug.apk | cut -d' ' -f1)
+          SIZE=$(stat -c%s releases/sippy-debug.apk)
+          VERSION_NAME=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          VERSION_CODE=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts | head -1)
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION_NAME/sippy-debug.apk"
+          jq -n \
+            --argjson versionCode "$VERSION_CODE" \
+            --arg versionName "$VERSION_NAME" \
+            --arg apkUrl "$URL" \
+            --arg sha256 "$SHA" \
+            --argjson size "$SIZE" \
+            --arg notes "In-app updates are here. Sippy now downloads and installs releases with checksum verification, with a browser fallback. Same signing key means future updates keep your data." \
+            '{versionCode:$versionCode,versionName:$versionName,apkUrl:$apkUrl,sha256:$sha256,size:$size,minSdk:26,notes:$notes}' \
+            > docs/update.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$GITHUB_REF_NAME"
-          git add -f releases/sippy-debug.apk
+          git add -f releases/sippy-debug.apk docs/update.json
           if ! git diff --cached --quiet; then
-            git commit -m "ci: publish debug APK to releases/"
+            git commit -m "ci: publish signed APK and update manifest"
             git push origin HEAD:"$GITHUB_REF_NAME"
           fi
       - name: Publish GitHub release with APK
@@ -66,18 +81,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view 1.2.0 --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release create 1.2.0 releases/sippy-debug.apk --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_REF_NAME" \
-              --title "Sippy 1.2.0" \
-              --notes "CI-built debug APK for Android 8.0+ (API 26). Settings -> Check for updates reads this release."
+          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          if ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$VERSION" releases/sippy-debug.apk docs/update.json \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_REF_NAME" \
+              --title "Sippy $VERSION" \
+              --notes "CI-built signed APK for Android 8.0+ (API 26). In-app updates verify the SHA-256 in update.json."
+          else
+            gh release upload "$VERSION" releases/sippy-debug.apk docs/update.json \
+              --repo "$GITHUB_REPOSITORY" --clobber
           fi
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sippy-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: sippy-signed-apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: ignore
       - name: Upload AAB
         if: always()

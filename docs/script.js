@@ -10,12 +10,23 @@
       headers: { Accept: 'application/vnd.github+json' }
     }).then(function (r) { return r.ok ? r.json() : Promise.reject(); })
       .then(function (release) {
-        var apk = (release.assets || []).find(function (a) { return a.name.toLowerCase().endsWith('.apk'); });
-        if (!apk) return;
-        links.forEach(function (a) { a.href = apk.browser_download_url; });
-        document.querySelectorAll('[data-version]').forEach(function (el) {
-          el.textContent = String(release.tag_name || '').replace(/^v/, '');
-        });
+        var assets = release.assets || [];
+        var manifest = assets.find(function (a) { return a.name === 'update.json'; });
+        var apk = assets.find(function (a) { return a.name.toLowerCase().endsWith('.apk'); });
+        if (!manifest && !apk) return;
+        function apply(url, version) {
+          if (url) links.forEach(function (a) { a.href = url; });
+          if (version) document.querySelectorAll('[data-version]').forEach(function (el) {
+            el.textContent = String(version).replace(/^v/, '');
+          });
+        }
+        if (manifest) {
+          fetch(manifest.browser_download_url).then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+            .then(function (m) { apply(m.apkUrl || (apk && apk.browser_download_url), m.versionName); })
+            .catch(function () { apply(apk && apk.browser_download_url, release.tag_name); });
+        } else {
+          apply(apk.browser_download_url, release.tag_name);
+        }
       }).catch(function () { /* static fallback stays in place */ });
   }
 
