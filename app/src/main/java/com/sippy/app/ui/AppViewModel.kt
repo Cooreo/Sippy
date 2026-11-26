@@ -2,6 +2,9 @@ package com.sippy.app.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.sippy.app.ai.CoachContext
+import com.sippy.app.ai.CoachState
+import com.sippy.app.ai.SmartCoach
 import com.sippy.app.data.AppEvent
 import com.sippy.app.data.DayStatsEntity
 import com.sippy.app.data.DrinkEntity
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -77,7 +81,9 @@ data class UiState(
     val mood: Mood = Mood.CONTENT,
     val dev: DevState = DevState(),
     val feedback: Feedback = Feedback(),
-    val update: UpdateState = UpdateState()
+    val update: UpdateState = UpdateState(),
+    val coach: CoachState = CoachState(),
+    val apiKey: String = ""
 )
 
 sealed interface UiAction {
@@ -102,6 +108,9 @@ sealed interface UiAction {
     data object LockDev : UiAction
     data object ClearToast : UiAction
     data class CheckUpdate(val manual: Boolean) : UiAction
+    data class SaveApiKey(val key: String) : UiAction
+    data class AskCoach(val question: String) : UiAction
+    data class ReduceMotion(val enabled: Boolean) : UiAction
     data class Simulate(val enabled: Boolean) : UiAction
     data class SimulatePercent(val percent: Float) : UiAction
     data class ForceMood(val mood: Mood?) : UiAction
@@ -132,6 +141,7 @@ class AppViewModel(
     private val _dev = MutableStateFlow(DevState())
     private val _feedback = MutableStateFlow(Feedback())
     private val _update = MutableStateFlow(UpdateState())
+    private val _coach = MutableStateFlow(CoachState())
 
     private val dayFlow: Flow<String> = clock.tick
         .map { DayKeys.key(it, clock.zone()) }
@@ -157,8 +167,19 @@ class AppViewModel(
         Triple(pair.first, pair.second, feedback)
     }
 
-    val state = combine(withFeedback, _update) { triple, update ->
-        assemble(triple.first, triple.second, triple.third, update)
+    private data class LoadedState(
+        val five: Five, val now: Long, val feedback: Feedback, val update: UpdateState
+    )
+
+    private val withUpdate = combine(withFeedback, _update) { triple, update ->
+        LoadedState(triple.first, triple.second, triple.third, update)
+    }
+
+    val state = combine(withUpdate, _coach) { loaded, coach ->
+        assemble(
+            loaded.five, loaded.now, loaded.feedback, loaded.update, coach,
+            loaded.five.settings.openRouterKey
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), UiState())
 
     private data class Five(
@@ -169,7 +190,10 @@ class AppViewModel(
         val dev: DevState
     )
 
-    private fun assemble(l: Five, now: Long, feedback: Feedback, update: UpdateState): UiState {
+    private fun assemble(
+        l: Five, now: Long, feedback: Feedback, update: UpdateState,
+        coach: CoachState, apiKey: String
+    ): UiState {
         val cfg = l.settings
         val active = l.friends.firstOrNull { it.id == cfg.activeFriendId } ?: l.friends.firstOrNull()
         val effective = if (l.dev.simulate)
@@ -186,14 +210,15 @@ class AppViewModel(
             history = l.history,
             now = now,
             progress = MoodCalculator.progress(effective, cfg.goalMl),
-            pace = MoodCalculator.pace(now, clock.zone(),
-                cfg.wakeStartHour, cfg.wakeEndHour),
+            pace = MoodCalculator.pace(now, clock.zone(), cfg.wakeStartHour, cfg.wakeEndHour),
             mood = l.dev.forcedMood ?: MoodCalculator.mood(
                 effective, cfg.goalMl, now, clock.zone(), cfg.wakeStartHour, cfg.wakeEndHour
             ),
             dev = l.dev,
             feedback = feedback,
-            update = update
+            update = update,
+            coach = coach,
+            apiKey = apiKey
         )
     }
 
@@ -274,6 +299,12 @@ class AppViewModel(
             }
             UiAction.ClearToast -> _feedback.update { it.copy(toast = null) }
             is UiAction.CheckUpdate -> checkUpdate(a.manual)
+            is UiAction.SaveApiKey -> {
+                settings.setOpenRouterKey(a.key)
+                toast("API key saved on this device")
+            }
+            is UiAction.AskCoach -> askCoach(a.question)
+            is UiAction.ReduceMotion -> settings.setReduceMotion(a.enabled)
             is UiAction.Simulate -> _dev.update { it.copy(simulate = a.enabled) }
             is UiAction.SimulatePercent -> _dev.update { it.copy(simulatePercent = a.percent) }
             is UiAction.ForceMood -> _dev.update { it.copy(forcedMood = a.mood) }
@@ -307,6 +338,27 @@ class AppViewModel(
             }
             UiAction.AddTestFriends -> toast(repository.devAddOneOfEachSpecies())
             UiAction.RemoveTestFriends -> toast(repository.devRemoveTestFriends())
+        }
+    }
+
+    private suspend fun askCoach(question: String) {
+        _coach.update { it.copy(busy = true, error = null) }
+        try {
+            val cfg = settings.snapshot()
+            val recent = repository.history(7).first()
+            val average = if (recent.isEmpty()) 0 else recent.sumOf { it.totalMl } / recent.size
+            val context = CoachContext(
+                friendName = repository.activeFriendName(),
+                totalMl = state.value.totalMl,
+                goalMl = cfg.goalMl,
+                streak = cfg.currentStreak,
+                mood = state.value.mood.label,
+                average7DaysMl = average
+            )
+            val answer = SmartCoach.ask(cfg.openRouterKey, question, context)
+            _coach.update { CoachState(false, answer, null) }
+        } catch (e: Exception) {
+            _coach.update { CoachState(false, null, e.message ?: "Could not reach OpenRouter") }
         }
     }
 

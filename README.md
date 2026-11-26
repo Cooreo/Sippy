@@ -1,5 +1,7 @@
 # Sippy
 
+**Distribution:** this project ships as a sideloaded Android APK from a GitHub Pages site (`docs/`) and GitHub Releases. The Play Store guide in `docs/RELEASE_GUIDE.md` is kept for reference only.
+
 An offline-first water tracking app with animated water friends, built with Kotlin, Jetpack Compose (Material 3), Room, Preferences DataStore, WorkManager and manual dependency injection.
 
 ## Project structure
@@ -38,6 +40,14 @@ Sippy/
         │           └── screens/{Onboarding.kt,Home.kt,Friends.kt,History.kt,Settings.kt,DevOptions.kt}
         └── test/java/com/sippy/app/domain/LogicTest.kt
 ```
+
+## Design
+
+The UI uses a reusable frosted-glass surface (`ui/theme/Glass.kt`) and an ambient orbital backdrop. Settings has a **Reduce motion** toggle that combines with the Android animation setting. Pets stay 2D Canvas art with gradient shading, extra expressions and smoother easing.
+
+## Website
+
+`docs/` is the GitHub Pages source (enable Pages → Deploy from a branch → current branch → `/docs`). It has a animated intro, floating particles and a download button pointing at the release APK.
 
 ## Build and run
 

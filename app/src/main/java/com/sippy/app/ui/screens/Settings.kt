@@ -22,6 +22,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.sippy.app.BuildConfig
@@ -55,6 +57,7 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
     var intervalDialog by remember { mutableStateOf(false) }
     var wakeStartDialog by remember { mutableStateOf(false) }
     var wakeEndDialog by remember { mutableStateOf(false) }
+    var apiKeyText by remember(cfg.openRouterKey) { mutableStateOf(cfg.openRouterKey) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -123,6 +126,14 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
         }
 
         SectionTitle("Appearance")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("Reduce motion")
+            Switch(checked = cfg.reduceMotion, onCheckedChange = { onAction(UiAction.ReduceMotion(it)) })
+        }
+        Text("Turns off bobbing, dancing and particle effects. The system animation setting is always respected too.",
+            style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(8.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             listOf("system", "light", "dark").forEach { mode ->
                 FilterChip(
@@ -155,6 +166,22 @@ fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (St
                 Text(Accents.labels[index], style = MaterialTheme.typography.labelSmall)
             }
         }
+
+        SectionTitle("Smart features (OpenRouter)")
+        OutlinedTextField(
+            value = apiKeyText,
+            onValueChange = { apiKeyText = it.trim() },
+            label = { Text("OpenRouter API key") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onAction(UiAction.SaveApiKey(apiKeyText)) }) { Text("Save key") }
+            TextButton(onClick = { onNavigate("coach") }) { Text("Open Coach") }
+        }
+        Text("Stored only on this device. Sent to OpenRouter only when you ask the coach a question.",
+            style = MaterialTheme.typography.bodySmall)
 
         SectionTitle("Updates")
         Text("Installed: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")

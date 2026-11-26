@@ -49,6 +49,7 @@ import com.sippy.app.ui.FriendCanvas
 import com.sippy.app.ui.LocalAnimationsEnabled
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
+import com.sippy.app.ui.theme.GlassCard
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -82,16 +83,12 @@ fun FriendsScreen(state: UiState, onAction: (UiAction) -> Unit) {
             items(state.friends, key = { it.id }) { friend ->
                 val species = runCatching { Species.valueOf(friend.species) }.getOrDefault(Species.DROPLET)
                 val stage = stageFor(friend.growthPoints)
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (friend.id == state.activeFriend?.id)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    ),
+                GlassCard(
                     modifier = Modifier.combinedClickable(
                         onClick = { onAction(UiAction.SelectFriend(friend.id)) },
                         onLongClick = { menuFor = friend.id }
-                    )
+                    ),
+                    alpha = if (friend.id == state.activeFriend?.id) 0.3f else 0.12f
                 ) {
                     Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Box {

@@ -2,6 +2,7 @@ package com.sippy.app.ui
 
 import android.provider.Settings
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,12 +30,14 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.sippy.app.R
 import com.sippy.app.ui.screens.AboutScreen
+import com.sippy.app.ui.screens.CoachScreen
 import com.sippy.app.ui.screens.DevOptionsScreen
 import com.sippy.app.ui.screens.FriendsScreen
 import com.sippy.app.ui.screens.HistoryScreen
 import com.sippy.app.ui.screens.HomeScreen
 import com.sippy.app.ui.screens.OnboardingScreen
 import com.sippy.app.ui.screens.SettingsScreen
+import com.sippy.app.ui.theme.AppBackdrop
 import com.sippy.app.ui.theme.SippyTheme
 
 private data class Tab(val route: String, val label: String, val icon: Int)
@@ -43,6 +46,7 @@ private val tabs = listOf(
     Tab("home", "Home", R.drawable.ic_home),
     Tab("friends", "Friends", R.drawable.ic_friends),
     Tab("history", "History", R.drawable.ic_history),
+    Tab("coach", "Coach", R.drawable.ic_coach),
     Tab("settings", "Settings", R.drawable.ic_settings)
 )
 
@@ -50,11 +54,12 @@ private val tabs = listOf(
 fun SippyNavigation(viewModel: AppViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val reduceMotion = remember {
+    val systemReduceMotion = remember {
         try {
             Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         } catch (e: Exception) { false }
     }
+    val reduceMotion = systemReduceMotion || (state.settings?.reduceMotion ?: false)
     CompositionLocalProvider(LocalAnimationsEnabled provides !reduceMotion) {
         SippyTheme(state.settings?.themeMode ?: "system", state.settings?.accent ?: "aqua") {
             val nav = rememberNavController()
@@ -99,14 +104,18 @@ fun SippyNavigation(viewModel: AppViewModel) {
                     }
                 }
             ) { padding ->
-                NavHost(nav, startDestination = start, modifier = Modifier.padding(padding)) {
+                Box(Modifier.padding(padding).fillMaxSize()) {
+                    AppBackdrop(animationsEnabled = !reduceMotion)
+                    NavHost(nav, startDestination = start, modifier = Modifier.fillMaxSize()) {
                     composable("onboarding") { OnboardingScreen(viewModel::act) }
                     composable("home") { HomeScreen(state, viewModel::act) }
                     composable("friends") { FriendsScreen(state, viewModel::act) }
                     composable("history") { HistoryScreen(state, viewModel::act) }
+                    composable("coach") { CoachScreen(state, viewModel::act) { nav.navigate("settings") } }
                     composable("settings") { SettingsScreen(state, viewModel::act, nav::navigate) }
                     composable("about") { AboutScreen(viewModel::act) { nav.popBackStack() } }
                     composable("dev") { DevOptionsScreen(state, viewModel::act) { nav.popBackStack() } }
+                }
                 }
             }
         }

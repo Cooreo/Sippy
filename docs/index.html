@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0716">
+<title>Sippy — hydrate in your orbit</title>
+<meta name="description" content="A local-first water tracker with animated friends. Download the Android APK.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="intro" id="intro" aria-hidden="true">
+  <div class="intro-inner">
+    <div class="intro-line i1">WELCOME TO</div>
+    <div class="intro-line i2">SIPPY'S</div>
+    <div class="intro-line i3">ORBIT</div>
+    <div class="intro-orbit"></div>
+  </div>
+</div>
+<canvas id="stars" aria-hidden="true"></canvas>
+
+<header class="topbar">
+  <a class="brand" href="#top"><img src="app-icon.png" alt=""> SIPPY</a>
+  <nav><a href="#why">Why</a><a href="#friends">Friends</a><a href="#download">Download</a>
+    <a class="pill" href="#download">GET APK ↓</a></nav>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow">LOCAL-FIRST · ANDROID 8+ · NO ACCOUNT</p>
+    <h1><span>HYDRATE</span><span class="script">in your</span><span class="outline">ORBIT.</span></h1>
+    <p class="lede">Little water friends who blink, bounce, giggle and dance when you hit your goal. Your data stays on your device. Your key, your call.</p>
+    <div class="cta-row">
+      <a class="big-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.2.0/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.2.0</span> <b>↓</b></a>
+      <a class="text-button" href="#friends">Meet the crew →</a>
+    </div>
+  </div>
+
+  <div class="universe" aria-label="Sippy droplet friend inside orbital rings">
+    <div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><div class="orbit orbit-c"></div>
+    <div class="planet"><img src="app-icon.png" alt="Sippy water droplet friend"></div>
+    <div class="glass-float f1"><small>WE GROW</small><span>Every sip counts.</span></div>
+    <div class="glass-float f2"><small>WE CELEBRATE</small><span>Goal hit? Dance time.</span></div>
+    <div class="glass-float f3"><small>WE STAY LOCAL</small><span>No cloud. No ads.</span></div>
+    <div class="dust d1"></div><div class="dust d2"></div><div class="dust d3"></div>
+  </div>
+</section>
+
+<div class="marquee"><div class="marquee-track">ONE MORE SIP · ONE MORE SIP · ONE MORE SIP · ONE MORE SIP · ONE MORE SIP ·&nbsp;</div></div>
+
+<section class="dark" id="why">
+  <div class="section-head"><span>01 / WHY</span><h2>You always know<br><em>where things stand.</em></h2></div>
+  <div class="cards">
+    <article class="glass"><h3>We notice</h3><p>Moods follow your pace, your streak and the time of day. Blobby knows when you're behind.</p></article>
+    <article class="glass"><h3>We play</h3><p>Four friends, four personalities. Blink, bob, giggle, dance — all drawn live in code.</p></article>
+    <article class="glass"><h3>We remember</h3><p>Growth stages, streaks and seven or thirty days of history, stored only on your device.</p></article>
+    <article class="glass"><h3>We respect you</h3><p>Offline insights always work. Add your OpenRouter key only if you want AI coaching.</p></article>
+  </div>
+</section>
+
+<section class="crew-section" id="friends">
+  <div class="section-head"><span>02 / THE CREW</span><h2>Four friends.<br><em>One daily ritual.</em></h2></div>
+  <div class="crew">
+    <div class="crew-card glass"><div class="crew-art droplet"></div><h3>Droplet</h3><p>The original sip buddy.</p></div>
+    <div class="crew-card glass"><div class="crew-art sprout"></div><h3>Sprout</h3><p>Leaves first, flowers later.</p></div>
+    <div class="crew-card glass"><div class="crew-art kitty"></div><h3>Kitty</h3><p>Bows, tail swishes, big hops.</p></div>
+    <div class="crew-card glass"><div class="crew-art blobby"></div><h3>Blobby</h3><p>Wobbles with pure joy.</p></div>
+  </div>
+</section>
+
+<section class="download" id="download">
+  <div class="section-head"><span>03 / GET IT</span><h2>Make a friend.<br><em>Keep a promise.</em></h2></div>
+  <p>Android 8.0 (API 26) or newer. Download the APK, allow installation from your browser, and open it. No account, no sign-in, no tracking.</p>
+  <a class="big-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.2.0/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.2.0</span> <b>↓</b></a>
+  <p class="small">Build it yourself from <a href="https://github.com/Cooreo/Sippy">source</a>. Read the <a href="PRIVACY_POLICY.md">privacy policy</a>.</p>
+</section>
+</main>
+<footer><span>SIPPY · HYDRATE IN YOUR ORBIT</span><span>NO CLOUD. NO ADS. JUST WATER.</span></footer>
+<script src="script.js"></script>
+</body>
+</html>
