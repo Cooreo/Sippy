@@ -37,8 +37,8 @@ class Notifier(private val context: Context) {
         val actionIntent = Intent(context, ReminderReceiver::class.java).setAction(ACTION_LOG)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val action = PendingIntent.getBroadcast(context, 2, actionIntent, flags)
-        val content = Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP }
-                val title = if (test) context.getString(R.string.notification_test, friendName)
+        val content = Intent(context, MainActivity::class.java).apply { this.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP }
+        val title = if (test) context.getString(R.string.notification_test, friendName)
         else context.getString(R.string.notification_title, friendName)
         val body = context.getString(R.string.notification_text, friendName)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)

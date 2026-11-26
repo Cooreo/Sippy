@@ -246,14 +246,14 @@ private fun DrawScope.drawFace(
     when (mood) {
         Mood.THIRSTY -> drawArcBox(
             Rect(cx - eyeGap * 0.6f, mouthY + eyeGap * 0.3f, cx + eyeGap * 0.6f, mouthY + eyeGap),
-            180f, 180f, ink, eyeR * 0.28f, Stroke
+            180f, 180f, ink, eyeR * 0.28f
         )
         Mood.SLEEPY -> drawLine(ink, Offset(cx - eyeR, mouthY), Offset(cx + eyeR, mouthY), eyeR * 0.32f)
         Mood.HAPPY, Mood.DANCING -> drawOvalBox(ink, Rect(cx - eyeGap * 0.55f, mouthY - eyeR * 0.4f,
             cx + eyeGap * 0.55f, mouthY + eyeR * 1.1f))
         else -> drawArcBox(
             Rect(cx - eyeGap * 0.6f, mouthY - eyeGap * 0.35f, cx + eyeGap * 0.6f, mouthY + eyeGap * 0.35f),
-            0f, 180f, ink, eyeR * 0.28f, Stroke
+            0f, 180f, ink, eyeR * 0.28f
         )
     }
 }
@@ -295,11 +295,10 @@ private fun DrawScope.drawRoundRectBox(
 )
 
 private fun DrawScope.drawArcBox(
-    rect: Rect, start: Float, sweep: Float, color: Color, strokeWidth: Float,
-    style: androidx.compose.ui.graphics.drawscope.DrawStyle
+    rect: Rect, start: Float, sweep: Float, color: Color, strokeWidth: Float
 ) = drawArc(
     color = color, startAngle = start, sweepAngle = sweep, useCenter = false,
     topLeft = Offset(rect.left, rect.top),
     size = androidx.compose.ui.geometry.Size(rect.width, rect.height),
-    style = style, alpha = 0.85f
+    style = Stroke(width = strokeWidth), alpha = 0.85f
 )

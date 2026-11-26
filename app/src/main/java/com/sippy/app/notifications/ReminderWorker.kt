@@ -1,7 +1,7 @@
 package com.sippy.app.notifications
 
 import android.content.Context
-import androidx.work.ListenableWorker
+import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.sippy.app.data.SettingsRepository
 import com.sippy.app.data.WaterRepository
@@ -15,7 +15,7 @@ class ReminderWorker(
     private val repository: WaterRepository,
     private val settings: SettingsRepository,
     private val notifier: Notifier
-) : ListenableWorker(context, params) {
+) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
             val cfg = settings.snapshot()

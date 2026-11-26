@@ -36,12 +36,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.sippy.app.domain.AmountFormat
-import com.sippy.app.ui.LocalFriendColors
 import com.sippy.app.ui.NumberDialog
 import com.sippy.app.ui.SectionTitle
 import com.sippy.app.ui.UiAction
 import com.sippy.app.ui.UiState
 import com.sippy.app.ui.theme.Accents
+import com.sippy.app.ui.theme.LocalFriendColors
 
 @Composable
 fun SettingsScreen(state: UiState, onAction: (UiAction) -> Unit, onNavigate: (String) -> Unit) {

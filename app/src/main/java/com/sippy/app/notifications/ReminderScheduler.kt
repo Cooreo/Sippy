@@ -46,7 +46,7 @@ class ReminderScheduler(
                 .setInitialDelay(maxOf(0L, delay), TimeUnit.MILLISECONDS)
                 .setConstraints(Constraints.Builder().build())
                 .build()
-            workManager.enqueueUniquePeriodic(WORK_NAME, ExistingPeriodicWorkPolicy.REPLACE, request)
+            workManager.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.REPLACE, request)
         }
     }
 
