@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Sippy</string>
+    <string name="notification_channel">Water reminders</string>
+    <string name="notification_title">Time for a sip, %1$s!</string>
+    <string name="notification_text">%1$s is waiting for you. Log a quick 250 ml.</string>
+    <string name="notification_test">Test reminder from %1$s</string>
+    <string name="notification_action">Log 250 ml</string>
+</resources>
