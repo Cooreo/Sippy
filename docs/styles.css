@@ -87,3 +87,31 @@ footer{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;paddin
 
 .app-icon{width:96px;height:96px;display:block;margin-bottom:12px;filter:drop-shadow(6px 8px 0 rgba(11,43,18,.2));animation:bob 3.2s ease-in-out infinite}
 .small-icon{width:74px;height:74px;margin-bottom:18px}
+
+
+/* Mobile hardening */
+html, body { max-width: 100%; overflow-x: hidden; }
+.intro.hidden { pointer-events: none; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 16px; }
+  .brand { font-size: 20px; }
+  nav { gap: 0; }
+  nav a:not(.pill) { display: none; }
+  nav .pill { padding: 8px 12px; font-size: 11px; }
+  .hero { padding: 5vh 16px 8vh; min-height: auto; gap: 0; }
+  h1 { font-size: clamp(42px, 13vw, 68px); letter-spacing: -3px; line-height: .88; }
+  .lede { font-size: 15px; }
+  .cta-row { flex-direction: column; align-items: flex-start; }
+  .big-button { width: 100%; justify-content: space-between; padding: 16px 18px; box-shadow: 5px 5px 0 var(--violet); }
+  .phone { height: 520px; width: min(300px, 84vw); }
+  .friend { transform: scale(.85); }
+  .ring { width: 180px; height: 180px; }
+  .ring-inner { width: 144px; height: 144px; }
+  .marquee { font-size: 18px; }
+  .dark, .friends, .download { padding: 8vh 16px; }
+  .section-head h2 { font-size: clamp(30px, 9vw, 48px); letter-spacing: -2px; }
+  .cards, .crew { grid-template-columns: 1fr; }
+  footer { padding: 20px 16px; }
+  .app-icon { width: 72px; height: 72px; }
+  .small-icon { width: 62px; height: 62px; }
+}

@@ -4581,7 +4581,7 @@ Install the release APK variant locally (`./gradlew assembleRelease`) and smoke-
   <div class="section-head light"><span>03 / GET IT</span><h2>Take Sippy with you.</h2></div>
   <img class="app-icon small-icon" src="app-icon.png" alt="Sippy app icon">
   <p>Android 8.0 (API 26) or newer. Download the APK, allow installation from your browser, and open it. Your data stays on your device.</p>
-  <a class="big-button dark-button" href="https://github.com/Cooreo/Sippy/releases/download/1.1.1/sippy-debug.apk">DOWNLOAD SIPPY 1.1.1 APK <span>↓</span></a>
+  <a class="big-button dark-button" data-download href="https://github.com/Cooreo/Sippy/releases/download/1.1.1/sippy-debug.apk">DOWNLOAD SIPPY <span data-version>1.1.1</span> APK <span>↓</span></a>
   <p class="small">Prefer to build it yourself? <a href="https://github.com/Cooreo/Sippy">Source on GitHub</a>. <a href="PRIVACY_POLICY.md">Privacy policy</a>.</p>
 </section>
 </main>
@@ -4630,6 +4630,24 @@ Install the release APK variant locally (`./gradlew assembleRelease`) and smoke-
     requestAnimationFrame(frame);
   }
   frame();
+
+  // Always point the download button at the newest release asset.
+  const downloadLinks = document.querySelectorAll('[data-download]');
+  if (downloadLinks.length) {
+    fetch('https://api.github.com/repos/Cooreo/Sippy/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(release => {
+        const apk = (release.assets || []).find(a => a.name.toLowerCase().endsWith('.apk'));
+        if (!apk) return;
+        downloadLinks.forEach(a => { a.href = apk.browser_download_url; });
+        document.querySelectorAll('[data-version]').forEach(el => {
+          el.textContent = String(release.tag_name || '').replace(/^v/, '');
+        });
+      })
+      .catch(() => { /* keep the static fallback link */ });
+  }
 
   const ring = document.getElementById('ringValue');
   if (ring) {
@@ -4739,6 +4757,34 @@ footer{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;paddin
 
 .app-icon{width:96px;height:96px;display:block;margin-bottom:12px;filter:drop-shadow(6px 8px 0 rgba(11,43,18,.2));animation:bob 3.2s ease-in-out infinite}
 .small-icon{width:74px;height:74px;margin-bottom:18px}
+
+
+/* Mobile hardening */
+html, body { max-width: 100%; overflow-x: hidden; }
+.intro.hidden { pointer-events: none; }
+@media (max-width: 600px) {
+  .topbar { padding: 10px 16px; }
+  .brand { font-size: 20px; }
+  nav { gap: 0; }
+  nav a:not(.pill) { display: none; }
+  nav .pill { padding: 8px 12px; font-size: 11px; }
+  .hero { padding: 5vh 16px 8vh; min-height: auto; gap: 0; }
+  h1 { font-size: clamp(42px, 13vw, 68px); letter-spacing: -3px; line-height: .88; }
+  .lede { font-size: 15px; }
+  .cta-row { flex-direction: column; align-items: flex-start; }
+  .big-button { width: 100%; justify-content: space-between; padding: 16px 18px; box-shadow: 5px 5px 0 var(--violet); }
+  .phone { height: 520px; width: min(300px, 84vw); }
+  .friend { transform: scale(.85); }
+  .ring { width: 180px; height: 180px; }
+  .ring-inner { width: 144px; height: 144px; }
+  .marquee { font-size: 18px; }
+  .dark, .friends, .download { padding: 8vh 16px; }
+  .section-head h2 { font-size: clamp(30px, 9vw, 48px); letter-spacing: -2px; }
+  .cards, .crew { grid-template-columns: 1fr; }
+  footer { padding: 20px 16px; }
+  .app-icon { width: 72px; height: 72px; }
+  .small-icon { width: 62px; height: 62px; }
+}
 ```
 
 ---

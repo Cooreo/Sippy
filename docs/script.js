@@ -32,6 +32,24 @@
   }
   frame();
 
+  // Always point the download button at the newest release asset.
+  const downloadLinks = document.querySelectorAll('[data-download]');
+  if (downloadLinks.length) {
+    fetch('https://api.github.com/repos/Cooreo/Sippy/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' }
+    })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(release => {
+        const apk = (release.assets || []).find(a => a.name.toLowerCase().endsWith('.apk'));
+        if (!apk) return;
+        downloadLinks.forEach(a => { a.href = apk.browser_download_url; });
+        document.querySelectorAll('[data-version]').forEach(el => {
+          el.textContent = String(release.tag_name || '').replace(/^v/, '');
+        });
+      })
+      .catch(() => { /* keep the static fallback link */ });
+  }
+
   const ring = document.getElementById('ringValue');
   if (ring) {
     let value = 0;
