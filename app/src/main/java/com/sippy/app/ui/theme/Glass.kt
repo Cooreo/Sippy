@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -40,6 +41,11 @@ fun GlassCard(
             Color.White.copy(alpha = 0.12f)
         )
     )
+    val glint = remember {
+        Brush.linearGradient(
+            listOf(Color.Transparent, Color.White.copy(alpha = 0.5f), Color.Transparent)
+        )
+    }
     Box(
         modifier
             .shadow(14.dp, shape, ambientColor = palette.primary.copy(alpha = 0.25f))
@@ -49,9 +55,7 @@ fun GlassCard(
     ) {
         Canvas(Modifier.matchParentSize()) {
             drawLine(
-                brush = Brush.linearGradient(
-                    listOf(Color.Transparent, Color.White.copy(alpha = 0.5f), Color.Transparent)
-                ),
+                brush = glint,
                 start = Offset(size.width * 0.12f, 1f),
                 end = Offset(size.width * 0.88f, 1f),
                 strokeWidth = 1.5f
